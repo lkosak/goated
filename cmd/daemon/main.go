@@ -28,7 +28,10 @@ func main() {
 		fatal("mkdir log dir: %v", err)
 	}
 
-	killExisting(pidPath)
+	// Refuse to start if another daemon is running — use `./run daemon restart --reason "..."` instead
+	if existingPID := readExistingPID(pidPath); existingPID > 0 {
+		fatal("daemon already running (pid=%d). Use: ./goated daemon restart --reason \"...\"", existingPID)
+	}
 
 	// If not the daemon child, re-exec backgrounded via shell nohup
 	if os.Getenv("_GOATED_DAEMON") != "1" {
@@ -74,10 +77,15 @@ func main() {
 		ContextWindowTokens: cfg.ContextWindowTokens,
 	}
 
+	// drainCtx stays alive during shutdown so in-flight handlers can finish
+	drainCtx, drainCancel := context.WithCancel(context.Background())
+	defer drainCancel()
+
 	svc := &gateway.Service{
 		Bridge:          bridge,
 		Store:           store,
 		DefaultTimezone: cfg.DefaultTimezone,
+		DrainCtx:        drainCtx,
 	}
 
 	conn, err := telegram.NewConnector(cfg.TelegramBotToken)
@@ -89,9 +97,10 @@ func main() {
 	defer cancel()
 
 	runner := &cronpkg.Runner{
-		Store:        store,
-		WorkspaceDir: cfg.WorkspaceDir,
-		LogDir:       cfg.LogDir,
+		Store:            store,
+		WorkspaceDir:     cfg.WorkspaceDir,
+		LogDir:           cfg.LogDir,
+		TelegramNotifier: conn,
 	}
 	go runCronTicker(ctx, runner)
 
@@ -107,33 +116,46 @@ func main() {
 		PublicURL:  cfg.TelegramWebhookURL,
 		ListenAddr: cfg.TelegramWebhookAddr,
 		Path:       cfg.TelegramWebhookPath,
-	}); err != nil {
+	}); err != nil && err != context.Canceled {
 		fatal("gateway: %v", err)
+	}
+
+	// Wait for in-flight message handlers to finish before exiting
+	fmt.Fprintf(os.Stderr, "[%s] shutting down, waiting for in-flight messages...\n",
+		time.Now().Format(time.RFC3339))
+	done := make(chan struct{})
+	go func() {
+		svc.WaitInflight()
+		close(done)
+	}()
+	select {
+	case <-done:
+		fmt.Fprintf(os.Stderr, "[%s] all messages flushed, exiting\n",
+			time.Now().Format(time.RFC3339))
+	case <-time.After(2 * time.Minute):
+		fmt.Fprintf(os.Stderr, "[%s] flush timeout (2m), exiting anyway\n",
+			time.Now().Format(time.RFC3339))
 	}
 }
 
-func killExisting(pidPath string) {
+// readExistingPID returns the PID of a running daemon, or 0 if none.
+func readExistingPID(pidPath string) int {
 	data, err := os.ReadFile(pidPath)
 	if err != nil {
-		return
+		return 0
 	}
 	pid, err := strconv.Atoi(stripNewline(string(data)))
 	if err != nil {
-		return
+		return 0
 	}
 	proc, err := os.FindProcess(pid)
 	if err != nil {
-		return
+		return 0
 	}
 	if err := proc.Signal(syscall.Signal(0)); err != nil {
-		return
+		return 0 // stale pid file
 	}
-	fmt.Printf("Killing existing goated_daemon (pid=%d)\n", pid)
-	_ = proc.Signal(syscall.SIGTERM)
-	time.Sleep(500 * time.Millisecond)
-	if err := proc.Signal(syscall.Signal(0)); err == nil {
-		_ = proc.Signal(syscall.SIGKILL)
-	}
+	return pid
 }
 
 func runCronTicker(ctx context.Context, runner *cronpkg.Runner) {

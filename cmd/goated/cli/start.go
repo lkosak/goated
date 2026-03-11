@@ -1,0 +1,127 @@
+package cli
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/spf13/cobra"
+
+	"goated/internal/app"
+	"goated/internal/claude"
+	cronpkg "goated/internal/cron"
+	"goated/internal/db"
+	"goated/internal/gateway"
+	"goated/internal/telegram"
+)
+
+var startCmd = &cobra.Command{
+	Use:   "start",
+	Short: "Start the gateway and cron scheduler",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg := app.LoadConfig()
+
+		if cfg.TelegramBotToken == "" {
+			return fmt.Errorf("GOAT_TELEGRAM_BOT_TOKEN is required")
+		}
+
+		store, err := db.Open(cfg.DBPath)
+		if err != nil {
+			return err
+		}
+		defer store.Close()
+
+		bridge := &claude.TmuxBridge{
+			WorkspaceDir:        cfg.WorkspaceDir,
+			LogDir:              cfg.LogDir,
+			ContextWindowTokens: cfg.ContextWindowTokens,
+		}
+
+		drainCtx, drainCancel := context.WithCancel(context.Background())
+		defer drainCancel()
+
+		svc := &gateway.Service{
+			Bridge:          bridge,
+			Store:           store,
+			DefaultTimezone: cfg.DefaultTimezone,
+			DrainCtx:        drainCtx,
+		}
+
+		conn, err := telegram.NewConnector(cfg.TelegramBotToken)
+		if err != nil {
+			return err
+		}
+
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+
+		// Start cron ticker
+		runner := &cronpkg.Runner{
+			Store:            store,
+			WorkspaceDir:     cfg.WorkspaceDir,
+			LogDir:           cfg.LogDir,
+			TelegramNotifier: conn,
+		}
+		go runCronTicker(ctx, runner)
+
+		// Start gateway
+		mode := telegram.RunModePolling
+		if cfg.TelegramMode == "webhook" {
+			mode = telegram.RunModeWebhook
+		}
+
+		fmt.Fprintf(os.Stderr, "Starting goated (gateway=%s, cron=1m ticker)\n", mode)
+		if err := conn.Run(ctx, svc, mode, telegram.WebhookOptions{
+			PublicURL:  cfg.TelegramWebhookURL,
+			ListenAddr: cfg.TelegramWebhookAddr,
+			Path:       cfg.TelegramWebhookPath,
+		}); err != nil && err != context.Canceled {
+			return err
+		}
+
+		fmt.Fprintln(os.Stderr, "Shutting down, waiting for in-flight messages...")
+		svc.WaitInflight()
+		fmt.Fprintln(os.Stderr, "All messages flushed.")
+		return nil
+	},
+}
+
+func runCronTicker(ctx context.Context, runner *cronpkg.Runner) {
+	// Align to the next minute boundary
+	now := time.Now()
+	next := now.Truncate(time.Minute).Add(time.Minute)
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(time.Until(next)):
+	}
+
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+
+	// Run immediately at the first aligned minute
+	runCronOnce(ctx, runner)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			runCronOnce(ctx, runner)
+		}
+	}
+}
+
+func runCronOnce(ctx context.Context, runner *cronpkg.Runner) {
+	now := time.Now()
+	if err := runner.Run(ctx, now); err != nil {
+		fmt.Fprintf(os.Stderr, "cron error: %v\n", err)
+	}
+}
+
+func init() {
+	rootCmd.AddCommand(startCmd)
+}

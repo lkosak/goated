@@ -6,16 +6,18 @@ cd "$ROOT_DIR"
 
 mkdir -p workspace
 
-echo "Building control binary: ./run"
-go build -o run .
+echo "Building control binary: ./goated"
+go build -o goated .
 
 echo "Building daemon binary: ./goated_daemon"
 go build -o goated_daemon ./cmd/daemon
 
-echo "Building agent binary: ./workspace/goated"
-go build -o workspace/goated ./cmd/goated
+echo "Building agent binary: ./workspace/goat"
+go build -o workspace/goat ./cmd/goated
+
+chmod +x goated goated_daemon workspace/goat
 
 echo "Build complete."
-echo "- $ROOT_DIR/run"
+echo "- $ROOT_DIR/goated"
 echo "- $ROOT_DIR/goated_daemon"
-echo "- $ROOT_DIR/workspace/goated"
+echo "- $ROOT_DIR/workspace/goat"

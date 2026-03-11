@@ -13,7 +13,6 @@ import (
 	"github.com/robfig/cron/v3"
 
 	"goated/internal/db"
-	"goated/internal/util"
 )
 
 type Runner struct {
@@ -96,7 +95,7 @@ func (r *Runner) runOne(ctx context.Context, nowMinute time.Time, job db.CronJob
 	}
 
 	jobLog := filepath.Join(r.LogDir, "cron", "jobs", fmt.Sprintf("%s-cron-%d.log", nowMinute.Format("20060102-1504"), job.ID))
-	prompt := buildCronPrompt(job.Prompt)
+	prompt := buildCronPrompt(job.ChatID, job.Prompt)
 	cmd := exec.CommandContext(ctx, "claude", "--dangerously-skip-permissions", "-p", prompt)
 	cmd.Dir = r.WorkspaceDir
 	output, err := cmd.CombinedOutput()
@@ -107,29 +106,24 @@ func (r *Runner) runOne(ctx context.Context, nowMinute time.Time, job db.CronJob
 	if err != nil {
 		status = "error"
 	}
-	userMessage := util.ExtractUserMessage(string(output))
 
-	if err := r.Store.RecordCronRun(job.ID, runMinute, status, userMessage, jobLog); err != nil {
+	if err := r.Store.RecordCronRun(job.ID, runMinute, status, "", jobLog); err != nil {
 		return runRecord{}, fmt.Errorf("update cron run: %w", err)
 	}
 
-	if r.TelegramNotifier != nil {
-		notify := strings.TrimSpace(userMessage)
-		if notify == "" {
-			notify = "Cron ran but no :START_USER_MESSAGE: block was found."
-		}
-		notify += fmt.Sprintf("\n\n[cron log] %s", jobLog)
-		_ = r.TelegramNotifier.SendMessage(ctx, job.ChatID, notify)
+	// On error, notify via Telegram so the user knows something went wrong
+	if status == "error" && r.TelegramNotifier != nil {
+		errNotify := fmt.Sprintf("Cron job #%d failed. Check log: %s", job.ID, jobLog)
+		_ = r.TelegramNotifier.SendMessage(ctx, job.ChatID, errNotify)
 	}
 
 	return runRecord{
-		Minute:      runMinute,
-		CronID:      job.ID,
-		ChatID:      job.ChatID,
-		Schedule:    job.Schedule,
-		Status:      status,
-		UserMessage: userMessage,
-		JobLogPath:  jobLog,
+		Minute:     runMinute,
+		CronID:     job.ID,
+		ChatID:     job.ChatID,
+		Schedule:   job.Schedule,
+		Status:     status,
+		JobLogPath: jobLog,
 	}, nil
 }
 
@@ -154,11 +148,14 @@ func appendRunRecords(path string, records []runRecord) error {
 	return nil
 }
 
-func buildCronPrompt(userPrompt string) string {
+func buildCronPrompt(chatID, userPrompt string) string {
 	return fmt.Sprintf(`Read CRON.md before executing.
 
 Execute this user cron prompt:
 %s
 
-Return user-visible output only with the delimiter contract documented in CRON.md.`, strings.TrimSpace(userPrompt))
+Send your response to the user by piping markdown into:
+  ./goat send_user_message --chat %s
+
+See GOATED_CLI_README.md for formatting details.`, strings.TrimSpace(userPrompt), chatID)
 }

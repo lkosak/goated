@@ -2,8 +2,7 @@
 
 When running as a scheduled job:
 - Read user prompt and execute it.
-- Include user-facing result only between:
-  :START_USER_MESSAGE:
-  ...
-  :END_USER_MESSAGE:
-- Keep any additional execution detail outside delimiters.
+- Send your response to the user by piping markdown into:
+  `./goat send_user_message --chat <chat_id>`
+- Your chat ID is provided in the cron prompt.
+- See GOATED_CLI_README.md for supported markdown formatting.

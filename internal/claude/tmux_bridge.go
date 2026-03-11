@@ -9,8 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"goated/internal/util"
 )
 
 type TmuxBridge struct {
@@ -19,22 +17,18 @@ type TmuxBridge struct {
 	ContextWindowTokens int
 }
 
-func (b *TmuxBridge) SendAndWait(ctx context.Context, _ string, userPrompt string, timeout time.Duration) (string, error) {
+func (b *TmuxBridge) SendAndWait(ctx context.Context, chatID string, userPrompt string, timeout time.Duration) error {
 	if err := b.EnsureSession(ctx); err != nil {
-		return "", err
+		return err
 	}
 
 	target := b.sessionName() + ":0.0"
 
-	// Track line count before sending so we only search new lines
-	beforeSnap, _ := capturePane(ctx, target)
-	startLine := strings.Count(beforeSnap, "\n")
-
-	wrapped := buildPromptEnvelope(userPrompt)
+	wrapped := buildPromptEnvelope(chatID, userPrompt)
 	if err := b.sendKeys(ctx, wrapped); err != nil {
-		return "", err
+		return err
 	}
-	return b.waitForResponse(ctx, target, startLine, timeout)
+	return b.waitForPromptReturn(ctx, target, timeout)
 }
 
 func (b *TmuxBridge) EnsureSession(ctx context.Context) error {
@@ -124,31 +118,35 @@ func (b *TmuxBridge) sendKeys(ctx context.Context, prompt string) error {
 	return nil
 }
 
-// waitForResponse polls capture-pane for delimiters only in lines after startLine.
-func (b *TmuxBridge) waitForResponse(ctx context.Context, target string, startLine int, timeout time.Duration) (string, error) {
+// waitForPromptReturn polls capture-pane until Claude returns to the interactive prompt (❯).
+func (b *TmuxBridge) waitForPromptReturn(ctx context.Context, target string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
+
+	// Give Claude a moment to start processing before we check for the prompt
+	time.Sleep(3 * time.Second)
 
 	for {
 		if time.Now().After(deadline) {
-			return "", fmt.Errorf("timed out waiting for claude response")
+			return fmt.Errorf("timed out waiting for claude response")
 		}
 		select {
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return ctx.Err()
 		default:
 		}
 
 		snap, err := capturePane(ctx, target)
 		if err == nil {
-			lines := strings.SplitAfter(snap, "\n")
-			if len(lines) > startLine {
-				newText := strings.Join(lines[startLine:], "")
-				if msg := util.ExtractUserMessage(newText); msg != "" {
-					return msg, nil
+			// Claude Code shows ❯ when it's ready for input.
+			// Check the last few non-empty lines for the prompt character.
+			lines := strings.Split(strings.TrimRight(snap, "\n "), "\n")
+			for i := len(lines) - 1; i >= 0 && i >= len(lines)-5; i-- {
+				if strings.Contains(lines[i], "❯") {
+					return nil
 				}
 			}
 		}
-		time.Sleep(1500 * time.Millisecond)
+		time.Sleep(2 * time.Second)
 	}
 }
 
@@ -157,14 +155,15 @@ func capturePane(ctx context.Context, target string) (string, error) {
 	return runTmuxOutput(ctx, "capture-pane", "-t", target, "-p", "-S", "-")
 }
 
-func buildPromptEnvelope(userPrompt string) string {
-	return fmt.Sprintf(`User message from connector:
+func buildPromptEnvelope(chatID, userPrompt string) string {
+	return fmt.Sprintf(`User message from Telegram (chat_id=%s):
 %s
 
-Read CLAUDE.md and return the user-visible response only with the configured user-message delimiter contract.
-Do not include placeholder text.
-Do not echo delimiter instructions back to the user.
-`, strings.TrimSpace(userPrompt))
+Respond to the user by piping your markdown response into:
+  ./goat send_user_message --chat %s
+
+See GOATED_CLI_README.md for formatting details.
+`, chatID, strings.TrimSpace(userPrompt), chatID)
 }
 
 func runTmux(ctx context.Context, args ...string) error {

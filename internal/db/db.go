@@ -143,6 +143,70 @@ func (s *Store) RecordCronRun(cronID uint64, runMinute, status, userMsg, jobLogP
 	})
 }
 
+func (s *Store) AllCrons() ([]CronJob, error) {
+	var jobs []CronJob
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(cronsBucket)
+		return b.ForEach(func(k, v []byte) error {
+			var job CronJob
+			if err := json.Unmarshal(v, &job); err != nil {
+				return nil
+			}
+			jobs = append(jobs, job)
+			return nil
+		})
+	})
+	return jobs, err
+}
+
+func (s *Store) GetCron(id uint64) (*CronJob, error) {
+	var job CronJob
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(cronsBucket)
+		data := b.Get(itob(id))
+		if data == nil {
+			return fmt.Errorf("cron %d not found", id)
+		}
+		return json.Unmarshal(data, &job)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &job, nil
+}
+
+func (s *Store) SetCronActive(id uint64, active bool) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(cronsBucket)
+		key := itob(id)
+		data := b.Get(key)
+		if data == nil {
+			return fmt.Errorf("cron %d not found", id)
+		}
+		var job CronJob
+		if err := json.Unmarshal(data, &job); err != nil {
+			return err
+		}
+		job.Active = active
+		updated, err := json.Marshal(job)
+		if err != nil {
+			return err
+		}
+		return b.Put(key, updated)
+	})
+}
+
+func (s *Store) DeleteCron(id uint64) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(cronsBucket)
+		key := itob(id)
+		if b.Get(key) == nil {
+			return fmt.Errorf("cron %d not found", id)
+		}
+		return b.Delete(key)
+	})
+}
+
 func itob(v uint64) []byte {
 	b := make([]byte, 8)
 	binary.BigEndian.PutUint64(b, v)
