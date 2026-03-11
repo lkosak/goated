@@ -13,7 +13,8 @@ import (
 // BuildPrompt constructs the prompt for a headless subagent.
 // preamble is an optional prefix (e.g. "Read CRON.md before executing.").
 // chatID, if non-empty, adds send_user_message instructions.
-func BuildPrompt(preamble, userPrompt, chatID string) string {
+// source and logPath are passed through so the main session gets context.
+func BuildPrompt(preamble, userPrompt, chatID, source, logPath string) string {
 	var b strings.Builder
 	if preamble != "" {
 		b.WriteString(preamble)
@@ -23,7 +24,14 @@ func BuildPrompt(preamble, userPrompt, chatID string) string {
 	b.WriteString("\n")
 	if chatID != "" {
 		b.WriteString("\nSend your response to the user by piping markdown into:\n")
-		b.WriteString(fmt.Sprintf("  ./goat send_user_message --chat %s\n", chatID))
+		sendCmd := fmt.Sprintf("  ./goat send_user_message --chat %s", chatID)
+		if source != "" {
+			sendCmd += fmt.Sprintf(" --source %s", source)
+		}
+		if logPath != "" {
+			sendCmd += fmt.Sprintf(" --log %s", logPath)
+		}
+		b.WriteString(sendCmd + "\n")
 		b.WriteString("\nSee GOATED_CLI_README.md for formatting details.\n")
 	}
 	return b.String()

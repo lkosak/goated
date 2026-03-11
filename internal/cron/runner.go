@@ -120,7 +120,7 @@ func (r *Runner) runOne(ctx context.Context, nowMinute time.Time, job db.CronJob
 		return runRecord{}, fmt.Errorf("cron #%d has empty prompt", job.ID)
 	}
 
-	prompt := buildCronPrompt(job.ChatID, userPrompt)
+	prompt := buildCronPrompt(job.ChatID, userPrompt, jobLog)
 	_, err := subagent.RunSync(jobCtx, r.Store, subagent.RunOpts{
 		WorkspaceDir: r.WorkspaceDir,
 		Prompt:       prompt,
@@ -175,14 +175,15 @@ func appendRunRecords(path string, records []runRecord) error {
 	return nil
 }
 
-func buildCronPrompt(chatID, userPrompt string) string {
+func buildCronPrompt(chatID, userPrompt, logPath string) string {
+	sendCmd := fmt.Sprintf("./goat send_user_message --chat %s --source cron --log %s", chatID, logPath)
 	return fmt.Sprintf(`Read CRON.md before executing.
 
 Execute this user cron prompt:
 %s
 
 Send your response to the user by piping markdown into:
-  ./goat send_user_message --chat %s
+  %s
 
-See GOATED_CLI_README.md for formatting details.`, strings.TrimSpace(userPrompt), chatID)
+See GOATED_CLI_README.md for formatting details.`, strings.TrimSpace(userPrompt), sendCmd)
 }

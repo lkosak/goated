@@ -36,6 +36,13 @@ EOF
 - Headers (rendered as bold): `# Heading`
 - Lists: `- item` or `* item`
 
+### Optional flags
+
+- `--source <name>` — caller source (e.g. `cron`, `subagent`). When set, the message is also shared with the main interactive session for context.
+- `--log <path>` — path to the caller's log file. Included in the main session notification so the user can inspect it.
+
+These flags are typically included in the `send_user_message` command provided in your prompt. Use them as given.
+
 ### Important notes
 
 - The `--chat` flag is required. Your chat ID is provided in the prompt envelope.
