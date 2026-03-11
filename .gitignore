@@ -1,0 +1,22 @@
+.env
+.env.*
+
+# Local binaries
+run
+goated
+goat
+*.exe
+*.out
+
+# Runtime state
+goat.sqlite
+logs/
+workspace/sessions/
+workspace/creds/
+workspace/goated
+workspace/logs/
+
+# OS/editor noise
+.DS_Store
+*.swp
+*.swo
