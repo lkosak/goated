@@ -23,7 +23,7 @@ Responding to the user:
 - Send your response by piping markdown into `./goat send_user_message --chat <chat_id>`
 - Your chat ID is provided in the prompt envelope (e.g. "chat_id=123456")
 - See GOATED_CLI_README.md for supported markdown formatting
-- For longer tasks: send a plan message at the start explaining what you're about to do, then send status updates roughly once per minute so the user knows you're still working. Don't go silent.
+- For longer tasks: send multiple messages using `./goat send_user_message`. Send a plan message at the start explaining what you're about to do, then send status updates roughly once per minute so the user knows you're still working. Don't go silent.
 
 Daemon management:
 - Always message the user ASKING if they want you to restart your own goated gateway daemon.
