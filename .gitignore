@@ -5,11 +5,16 @@
 run
 goated
 goat
+goated_daemon
 *.exe
 *.out
 
+# Agent identiy
+workspace/self
+
 # Runtime state
 goat.sqlite
+*.db
 logs/
 workspace/sessions/
 workspace/creds/

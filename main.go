@@ -1,7 +1,7 @@
 package main
 
-import "goat/cmd/goat"
+import "goated/cmd/goated"
 
 func main() {
-	goat.Execute()
+	goated.Execute()
 }

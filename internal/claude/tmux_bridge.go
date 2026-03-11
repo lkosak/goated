@@ -1,7 +1,6 @@
 package claude
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -11,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"goat/internal/util"
+	"goated/internal/util"
 )
 
 type TmuxBridge struct {
@@ -24,38 +23,36 @@ func (b *TmuxBridge) SendAndWait(ctx context.Context, _ string, userPrompt strin
 	if err := b.EnsureSession(ctx); err != nil {
 		return "", err
 	}
-	logPath := b.sessionLogPath()
-	offset := int64(0)
-	if st, err := os.Stat(logPath); err == nil {
-		offset = st.Size()
-	}
+
+	target := b.sessionName() + ":0.0"
+
+	// Track line count before sending so we only search new lines
+	beforeSnap, _ := capturePane(ctx, target)
+	startLine := strings.Count(beforeSnap, "\n")
 
 	wrapped := buildPromptEnvelope(userPrompt)
 	if err := b.sendKeys(ctx, wrapped); err != nil {
 		return "", err
 	}
-	return waitForUserMessage(ctx, logPath, offset, timeout)
+	return b.waitForResponse(ctx, target, startLine, timeout)
 }
 
 func (b *TmuxBridge) EnsureSession(ctx context.Context) error {
 	if err := os.MkdirAll(b.WorkspaceDir, 0o755); err != nil {
 		return fmt.Errorf("mkdir workspace dir: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(b.sessionLogPath()), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(b.LogDir, "telegram"), 0o755); err != nil {
 		return fmt.Errorf("mkdir log dir: %w", err)
 	}
 
 	session := b.sessionName()
 	created := false
 	if err := runTmux(ctx, "has-session", "-t", session); err != nil {
-		cmd := fmt.Sprintf("cd %q && claude --dangerously-skip-permissions", b.WorkspaceDir)
+		cmd := fmt.Sprintf("cd %q && unset CLAUDECODE && claude --dangerously-skip-permissions", b.WorkspaceDir)
 		if err := runTmux(ctx, "new-session", "-d", "-s", session, cmd); err != nil {
 			return fmt.Errorf("start claude tmux session: %w", err)
 		}
 		created = true
-	}
-	if err := b.attachPipe(ctx); err != nil {
-		return err
 	}
 	if created {
 		if err := waitForClaudeReady(ctx, session+":0.0", 25*time.Second); err != nil {
@@ -67,27 +64,20 @@ func (b *TmuxBridge) EnsureSession(ctx context.Context) error {
 
 func (b *TmuxBridge) ClearSession(ctx context.Context, _ string) error {
 	session := b.sessionName()
-	_ = runTmux(ctx, "pipe-pane", "-t", session+":0.0")
 	_ = runTmux(ctx, "kill-session", "-t", session)
-
-	logPath := b.sessionLogPath()
-	if st, err := os.Stat(logPath); err == nil && st.Size() > 0 {
-		ts := time.Now().Format("20060102-150405")
-		archived := strings.TrimSuffix(logPath, ".log") + "-" + ts + ".log"
-		if err := os.Rename(logPath, archived); err != nil {
-			return fmt.Errorf("rotate log: %w", err)
-		}
-	}
 	return b.EnsureSession(ctx)
 }
 
 func (b *TmuxBridge) ContextUsagePercent(_ string) int {
-	path := b.sessionLogPath()
-	st, err := os.Stat(path)
+	// Rough estimate from scrollback size
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	target := b.sessionName() + ":0.0"
+	out, err := capturePane(ctx, target)
 	if err != nil {
 		return 0
 	}
-	estTokens := int(st.Size() / 4)
+	estTokens := len(out) / 4
 	if b.ContextWindowTokens <= 0 {
 		return 0
 	}
@@ -95,31 +85,11 @@ func (b *TmuxBridge) ContextUsagePercent(_ string) int {
 	if pct > 100 {
 		return 100
 	}
-	if pct < 0 {
-		return 0
-	}
 	return pct
 }
 
 func (b *TmuxBridge) sessionName() string {
 	return "goat_main"
-}
-
-func (b *TmuxBridge) sessionLogPath() string {
-	return filepath.Join(b.LogDir, "telegram", "main.log")
-}
-
-func (b *TmuxBridge) attachPipe(ctx context.Context) error {
-	target := b.sessionName() + ":0.0"
-	logPath := b.sessionLogPath()
-	pipe := fmt.Sprintf("cat >> %q", logPath)
-	if err := runTmux(ctx, "pipe-pane", "-t", target); err != nil {
-		return fmt.Errorf("stop existing pipe-pane: %w", err)
-	}
-	if err := runTmux(ctx, "pipe-pane", "-t", target, "-o", pipe); err != nil {
-		return fmt.Errorf("attach pipe-pane: %w", err)
-	}
-	return nil
 }
 
 func (b *TmuxBridge) sendKeys(ctx context.Context, prompt string) error {
@@ -143,14 +113,21 @@ func (b *TmuxBridge) sendKeys(ctx context.Context, prompt string) error {
 	if err := runTmux(ctx, "paste-buffer", "-b", "goat", "-t", target); err != nil {
 		return fmt.Errorf("paste-buffer: %w", err)
 	}
-	if err := runTmux(ctx, "send-keys", "-t", target, "C-m"); err != nil {
+	// Wait until Claude Code's input box shows the pasted text
+	firstLine := strings.SplitN(prompt, "\n", 2)[0]
+	if err := waitForPaneContains(ctx, target, firstLine, 5*time.Second); err != nil {
+		return fmt.Errorf("paste not received: %w", err)
+	}
+	if err := runTmux(ctx, "send-keys", "-t", target, "Enter"); err != nil {
 		return fmt.Errorf("send enter: %w", err)
 	}
 	return nil
 }
 
-func waitForUserMessage(ctx context.Context, logPath string, offset int64, timeout time.Duration) (string, error) {
+// waitForResponse polls capture-pane for delimiters only in lines after startLine.
+func (b *TmuxBridge) waitForResponse(ctx context.Context, target string, startLine int, timeout time.Duration) (string, error) {
 	deadline := time.Now().Add(timeout)
+
 	for {
 		if time.Now().After(deadline) {
 			return "", fmt.Errorf("timed out waiting for claude response")
@@ -161,30 +138,23 @@ func waitForUserMessage(ctx context.Context, logPath string, offset int64, timeo
 		default:
 		}
 
-		chunk, err := readFromOffset(logPath, offset)
+		snap, err := capturePane(ctx, target)
 		if err == nil {
-			if msg := util.ExtractUserMessage(chunk); msg != "" {
-				return msg, nil
+			lines := strings.SplitAfter(snap, "\n")
+			if len(lines) > startLine {
+				newText := strings.Join(lines[startLine:], "")
+				if msg := util.ExtractUserMessage(newText); msg != "" {
+					return msg, nil
+				}
 			}
 		}
-		time.Sleep(1200 * time.Millisecond)
+		time.Sleep(1500 * time.Millisecond)
 	}
 }
 
-func readFromOffset(path string, offset int64) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	if _, err := f.Seek(offset, io.SeekStart); err != nil {
-		return "", err
-	}
-	var buf bytes.Buffer
-	if _, err := io.Copy(&buf, f); err != nil {
-		return "", err
-	}
-	return buf.String(), nil
+// capturePane returns the full scrollback of a tmux pane as clean text.
+func capturePane(ctx context.Context, target string) (string, error) {
+	return runTmuxOutput(ctx, "capture-pane", "-t", target, "-p", "-S", "-")
 }
 
 func buildPromptEnvelope(userPrompt string) string {
@@ -215,6 +185,23 @@ func runTmuxOutput(ctx context.Context, args ...string) (string, error) {
 	return string(out), nil
 }
 
+func waitForPaneContains(ctx context.Context, target, needle string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		out, err := capturePane(ctx, target)
+		if err == nil && strings.Contains(out, needle) {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return fmt.Errorf("timed out waiting for %q in pane", needle)
+}
+
 func waitForClaudeReady(ctx context.Context, target string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -223,7 +210,7 @@ func waitForClaudeReady(ctx context.Context, target string, timeout time.Duratio
 			return ctx.Err()
 		default:
 		}
-		out, err := runTmuxOutput(ctx, "capture-pane", "-t", target, "-p", "-S", "-80")
+		out, err := capturePane(ctx, target)
 		if err == nil {
 			if strings.Contains(out, "Claude Code") && strings.Contains(out, "❯") {
 				return nil
@@ -236,9 +223,7 @@ func waitForClaudeReady(ctx context.Context, target string, timeout time.Duratio
 
 func (b *TmuxBridge) StopSession(ctx context.Context) error {
 	session := b.sessionName()
-	_ = runTmux(ctx, "pipe-pane", "-t", session+":0.0")
 	if err := runTmux(ctx, "kill-session", "-t", session); err != nil {
-		// Ignore "no such session" style failures.
 		if strings.Contains(err.Error(), "can't find session") || strings.Contains(err.Error(), "no server running") {
 			return nil
 		}

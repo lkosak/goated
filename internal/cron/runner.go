@@ -2,7 +2,6 @@ package cron
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -13,11 +12,12 @@ import (
 
 	"github.com/robfig/cron/v3"
 
-	"goat/internal/util"
+	"goated/internal/db"
+	"goated/internal/util"
 )
 
 type Runner struct {
-	DB               *sql.DB
+	Store            *db.Store
 	WorkspaceDir     string
 	LogDir           string
 	TelegramNotifier Notifier
@@ -27,17 +27,9 @@ type Notifier interface {
 	SendMessage(ctx context.Context, chatID, text string) error
 }
 
-type cronRow struct {
-	ID       int64
-	ChatID   string
-	Schedule string
-	Prompt   string
-	Timezone string
-}
-
 type runRecord struct {
 	Minute      string `json:"minute"`
-	CronID      int64  `json:"cron_id"`
+	CronID      uint64 `json:"cron_id"`
 	ChatID      string `json:"chat_id"`
 	Schedule    string `json:"schedule"`
 	Status      string `json:"status"`
@@ -47,7 +39,7 @@ type runRecord struct {
 
 func (r *Runner) Run(ctx context.Context, now time.Time) error {
 	nowMinute := now.UTC().Truncate(time.Minute)
-	jobs, err := r.dueJobs(ctx, nowMinute)
+	jobs, err := r.dueJobs(nowMinute)
 	if err != nil {
 		return err
 	}
@@ -69,24 +61,15 @@ func (r *Runner) Run(ctx context.Context, now time.Time) error {
 	return appendRunRecords(filepath.Join(r.LogDir, "cron", "runs.jsonl"), records)
 }
 
-func (r *Runner) dueJobs(ctx context.Context, nowMinute time.Time) ([]cronRow, error) {
-	rows, err := r.DB.QueryContext(ctx, `
-		SELECT id, chat_id, schedule, prompt, timezone
-		FROM crons
-		WHERE active = 1
-	`)
+func (r *Runner) dueJobs(nowMinute time.Time) ([]db.CronJob, error) {
+	all, err := r.Store.ActiveCrons()
 	if err != nil {
 		return nil, fmt.Errorf("query crons: %w", err)
 	}
-	defer rows.Close()
 
 	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
-	var due []cronRow
-	for rows.Next() {
-		var c cronRow
-		if err := rows.Scan(&c.ID, &c.ChatID, &c.Schedule, &c.Prompt, &c.Timezone); err != nil {
-			return nil, fmt.Errorf("scan cron row: %w", err)
-		}
+	var due []db.CronJob
+	for _, c := range all {
 		loc, err := time.LoadLocation(c.Timezone)
 		if err != nil {
 			loc = time.Local
@@ -102,19 +85,14 @@ func (r *Runner) dueJobs(ctx context.Context, nowMinute time.Time) ([]cronRow, e
 			due = append(due, c)
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate cron rows: %w", err)
-	}
 	return due, nil
 }
 
-func (r *Runner) runOne(ctx context.Context, nowMinute time.Time, job cronRow) (runRecord, error) {
+func (r *Runner) runOne(ctx context.Context, nowMinute time.Time, job db.CronJob) (runRecord, error) {
 	runMinute := nowMinute.Format(time.RFC3339)
-	if _, err := r.DB.ExecContext(ctx, `
-		INSERT OR IGNORE INTO cron_runs (cron_id, run_minute, status)
-		VALUES (?, ?, 'started')
-	`, job.ID, runMinute); err != nil {
-		return runRecord{}, fmt.Errorf("insert cron run row: %w", err)
+
+	if err := r.Store.RecordCronRun(job.ID, runMinute, "started", "", ""); err != nil {
+		return runRecord{}, fmt.Errorf("insert cron run: %w", err)
 	}
 
 	jobLog := filepath.Join(r.LogDir, "cron", "jobs", fmt.Sprintf("%s-cron-%d.log", nowMinute.Format("20060102-1504"), job.ID))
@@ -131,12 +109,8 @@ func (r *Runner) runOne(ctx context.Context, nowMinute time.Time, job cronRow) (
 	}
 	userMessage := util.ExtractUserMessage(string(output))
 
-	if _, err := r.DB.ExecContext(ctx, `
-		UPDATE cron_runs
-		SET status = ?, user_message = ?, job_log_path = ?, raw_output_path = ?
-		WHERE cron_id = ? AND run_minute = ?
-	`, status, userMessage, jobLog, jobLog, job.ID, runMinute); err != nil {
-		return runRecord{}, fmt.Errorf("update cron run row: %w", err)
+	if err := r.Store.RecordCronRun(job.ID, runMinute, status, userMessage, jobLog); err != nil {
+		return runRecord{}, fmt.Errorf("update cron run: %w", err)
 	}
 
 	if r.TelegramNotifier != nil {

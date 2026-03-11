@@ -10,7 +10,8 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
-	"goat/internal/gateway"
+	"goated/internal/gateway"
+	"goated/internal/util"
 )
 
 type Connector struct {
@@ -162,7 +163,18 @@ func (c *Connector) SendMessage(_ context.Context, chatID, text string) error {
 	if err != nil {
 		return fmt.Errorf("invalid chat id %q: %w", chatID, err)
 	}
-	msg := tgbotapi.NewMessage(chat, text)
+
+	// Try HTML-formatted message first
+	htmlText := util.MarkdownToTelegramHTML(text)
+	msg := tgbotapi.NewMessage(chat, htmlText)
+	msg.ParseMode = "HTML"
+	_, err = c.bot.Send(msg)
+	if err == nil {
+		return nil
+	}
+
+	// Fallback to plain text if Telegram rejects the HTML
+	msg = tgbotapi.NewMessage(chat, text)
 	_, err = c.bot.Send(msg)
 	if err != nil {
 		return fmt.Errorf("send telegram message: %w", err)

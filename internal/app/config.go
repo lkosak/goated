@@ -27,7 +27,7 @@ func LoadConfig() Config {
 
 	cwd, _ := os.Getwd()
 	workspace := getenvDefault("GOAT_WORKSPACE_DIR", filepath.Join(cwd, "workspace"))
-	db := getenvDefault("GOAT_DB_PATH", filepath.Join(cwd, "goat.sqlite"))
+	db := getenvDefault("GOAT_DB_PATH", filepath.Join(cwd, "goated.db"))
 	logDir := getenvDefault("GOAT_LOG_DIR", filepath.Join(cwd, "logs"))
 	tz := getenvDefault("GOAT_DEFAULT_TIMEZONE", "America/Los_Angeles")
 	ctxTokens := getenvIntDefault("GOAT_CONTEXT_WINDOW_TOKENS", 200000)

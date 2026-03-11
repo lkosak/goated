@@ -2,17 +2,17 @@ package gateway
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"strings"
 	"time"
 
-	"goat/internal/claude"
+	"goated/internal/claude"
+	"goated/internal/db"
 )
 
 type Service struct {
 	Bridge          *claude.TmuxBridge
-	DB              *sql.DB
+	Store           *db.Store
 	DefaultTimezone string
 }
 
@@ -56,10 +56,7 @@ func (s *Service) handleScheduleCommand(ctx context.Context, msg IncomingMessage
 	if schedule == "" || prompt == "" {
 		return responder.SendMessage(ctx, msg.ChatID, "Both cron expression and prompt are required.")
 	}
-	_, err := s.DB.ExecContext(ctx, `
-		INSERT INTO crons (chat_id, schedule, prompt, timezone, active)
-		VALUES (?, ?, ?, ?, 1)
-	`, msg.ChatID, schedule, prompt, s.DefaultTimezone)
+	_, err := s.Store.AddCron(msg.ChatID, schedule, prompt, s.DefaultTimezone)
 	if err != nil {
 		return responder.SendMessage(ctx, msg.ChatID, "Failed to save schedule: "+err.Error())
 	}
