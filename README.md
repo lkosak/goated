@@ -12,6 +12,21 @@ A self-healing bridge between Telegram and Claude Code. Send messages to your ag
 - **Telegram Bot API** — user-facing interface (bot token from [@BotFather](https://t.me/BotFather))
 - **bbolt** — embedded key-value database (no external DB server)
 
+### Footprint
+
+| Binary | Size | Description |
+|--------|------|-------------|
+| `goated` | 11 MB | Control-plane CLI (start, daemon, cron, bootstrap) |
+| `goated_daemon` | 11 MB | Background daemon (same code, daemon entrypoint) |
+| `goat` | 11 MB | Agent-facing CLI (send_user_message, creds, cron, spawn-subagent) |
+| `goated.db` | 64 KB | bbolt embedded database (crons, subagent runs, metadata) |
+
+All three binaries are statically-compiled Go with no runtime dependencies.
+
+**Memory at runtime:** the daemon uses ~14 MB RSS. Subagents are Claude Code processes (separate from goated's memory). The goat CLI is exec'd per-call and exits immediately — no persistent memory cost.
+
+For a detailed comparison of token usage, file sizes, and memory overhead vs. OpenClaw, see [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+
 ### How it works
 
 ```
@@ -91,7 +106,8 @@ goated/
 │   └── self/                   # Agent's private repo (gitignored, see below)
 │
 ├── docs/
-│   └── OPENCLAW_MIGRATION.md   # Migration guide from OpenClaw
+│   ├── OPENCLAW_MIGRATION.md   # Migration guide from OpenClaw
+│   └── PERFORMANCE.md          # Token, memory, and resource comparison vs OpenClaw
 │
 └── logs/                       # All logs (gitignored)
     ├── goated_daemon.log
