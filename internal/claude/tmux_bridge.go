@@ -275,9 +275,12 @@ func (b *TmuxBridge) waitForPromptReturn(ctx context.Context, target string, tim
 		if err == nil {
 			// Claude Code shows ❯ when it's ready for input.
 			// Check the last few non-empty lines for the prompt character.
+			// Ignore lines that contain "queued messages" — that's Claude Code's
+			// multi-input queue, not an idle prompt.
 			lines := strings.Split(strings.TrimRight(snap, "\n "), "\n")
 			for i := len(lines) - 1; i >= 0 && i >= len(lines)-5; i-- {
-				if strings.Contains(lines[i], "❯") {
+				line := lines[i]
+				if strings.Contains(line, "❯") && !strings.Contains(line, "queued") {
 					return nil
 				}
 			}
