@@ -31,9 +31,10 @@ The daemon self-backgrounds. No `nohup &` needed.
 
 ## Restarting the daemon
 
+Use the daemon management command — it waits for in-flight messages to flush:
+
 ```bash
-pkill -f goated_daemon
-./build_all_and_run_daemon.sh
+./goated daemon restart --reason "deployed new build"
 ```
 
 ## Verifying changes compile

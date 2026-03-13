@@ -13,6 +13,8 @@
 # Agent personal state (belongs in workspace/self/ private repo)
 workspace/self
 
+workspace/tmp/
+
 # Runtime state
 goat.sqlite
 *.db
@@ -25,6 +27,9 @@ workspace/logs/
 
 # Claude Code local settings
 workspace/.claude
+
+# Claude Code
+.claude/
 
 # OS/editor noise
 .DS_Store
