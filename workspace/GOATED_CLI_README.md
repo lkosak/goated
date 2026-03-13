@@ -24,32 +24,12 @@ And `inline code` as well.
 EOF
 ```
 
-### Supported markdown formatting
+### Message formatting
 
-- **Bold**: `**text**`
-- *Italic*: `*text*`
-- ***Bold italic***: `***text***`
-- ~~Strikethrough~~: `~~text~~`
-- `Inline code`: `` `code` ``
-- Fenced code blocks with language tags: ` ```python ... ``` `
-- Blockquotes: `> text`
-- Headers (rendered as bold): `# Heading`
-- Lists: `- item` or `* item`
+Write standard markdown. The CLI auto-converts it for the active gateway. For channel-specific details (what works, what doesn't, size limits):
 
-### Slack formatting tips
-
-When sending messages via Slack, tables and data visualizations render much better inside **code blocks** than as raw markdown tables. Slack doesn't support markdown table syntax natively, so use fenced code blocks for any tabular data:
-
-```
-\`\`\`
-#  | Account      | Value   | Stage
----|--------------|---------|----------
-1  | Acme Corp    | $150K   | Renewal
-2  | Initech      | $95K    | Discovery
-\`\`\`
-```
-
-This applies to any structured data: reports, comparisons, dashboards, lists with columns. Plain markdown tables will render as messy text in Slack — always wrap them in code blocks.
+- **Slack**: see [SLACK_MESSAGE_FORMATTING.md](SLACK_MESSAGE_FORMATTING.md)
+- **Telegram**: see [TELEGRAM_MESSAGE_FORMATTING.md](TELEGRAM_MESSAGE_FORMATTING.md)
 
 ### Optional flags
 

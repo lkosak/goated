@@ -11,6 +11,9 @@ var (
 	mdBoldItalicToSlack = regexp.MustCompile(`\*\*\*(.+?)\*\*\*`)
 	mdBoldToSlack       = regexp.MustCompile(`\*\*(.+?)\*\*`)
 	mdStrikeToSlack     = regexp.MustCompile(`~~(.+?)~~`)
+	// Markdown backslash escapes that should be stripped for Slack.
+	// Agents often emit \! \. \- \( \) etc. which Slack shows literally.
+	mdBackslashEscape = regexp.MustCompile(`\\([!.\-()#\[\]{}+>|_~])`)
 )
 
 // MarkdownToSlackMrkdwn converts standard markdown to Slack's mrkdwn format.
@@ -47,6 +50,8 @@ func MarkdownToSlackMrkdwn(md string) string {
 }
 
 func convertSlackInline(line string) string {
+	// Strip markdown backslash escapes (e.g. \! \. \-) before other conversions
+	line = mdBackslashEscape.ReplaceAllString(line, "${1}")
 	// Bold+italic: ***text*** → *_text_*
 	line = mdBoldItalicToSlack.ReplaceAllString(line, "*_${1}_*")
 	// Bold: **text** → *text*

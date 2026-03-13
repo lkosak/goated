@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"goated/internal/pydict"
 	"goated/internal/tmux"
 )
 
@@ -27,27 +28,20 @@ func (b *TmuxBridge) SendAndWait(ctx context.Context, channel, chatID string, us
 	return tmux.PasteAndEnter(ctx, wrapped)
 }
 
-// IsSessionBusy returns true if Claude is not at the ❯ prompt (i.e., working).
+// IsSessionBusy returns true if Claude is not idle. Uses content-change
+// detection (two captures 2s apart) rather than a single ❯ check, because
+// the prompt is often visible even while Claude is actively working.
 func (b *TmuxBridge) IsSessionBusy(ctx context.Context) (bool, error) {
-	snap, err := tmux.CapturePane(ctx)
-	if err != nil {
-		return false, err
-	}
-	lines := strings.Split(strings.TrimRight(snap, "\n "), "\n")
-	for i := len(lines) - 1; i >= 0 && i >= len(lines)-5; i-- {
-		if strings.Contains(lines[i], "❯") {
-			return false, nil
-		}
-	}
-	return true, nil
+	return !tmux.IsIdle(ctx), nil
 }
 
 // waitForIdleOrStall waits up to timeout for Claude to return to ❯.
 // Returns true if it finished, false if the pane stopped changing (stalled).
+// Requires pane to be stable (unchanged) AND contain ❯ to count as idle.
 func (b *TmuxBridge) waitForIdleOrStall(ctx context.Context, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	var lastSnap string
-	unchangedCount := 0
+	stableCount := 0
 
 	for time.Now().Before(deadline) {
 		select {
@@ -62,23 +56,18 @@ func (b *TmuxBridge) waitForIdleOrStall(ctx context.Context, timeout time.Durati
 			continue
 		}
 
-		// Check if Claude returned to prompt
-		lines := strings.Split(strings.TrimRight(snap, "\n "), "\n")
-		for i := len(lines) - 1; i >= 0 && i >= len(lines)-5; i-- {
-			if strings.Contains(lines[i], "❯") {
+		if snap == lastSnap {
+			stableCount++
+			// Stable for 2 consecutive checks (6+ seconds) with ❯ → idle
+			if stableCount >= 2 && tmux.HasPrompt(snap) {
 				return true
 			}
-		}
-
-		// Track whether the pane is changing
-		if snap == lastSnap {
-			unchangedCount++
-			// 30 seconds of no change = stalled
-			if unchangedCount >= 10 {
+			// 30 seconds of no change without ❯ = stalled
+			if stableCount >= 10 {
 				return false
 			}
 		} else {
-			unchangedCount = 0
+			stableCount = 0
 			lastSnap = snap
 		}
 
@@ -119,32 +108,46 @@ func (b *TmuxBridge) ClearSession(ctx context.Context, _ string) error {
 }
 
 // ContextUsagePercent pastes /context into the Claude Code session and parses
-// the real token usage percentage from the output.
+// the real token usage percentage from the output. Polls for the regex pattern
+// directly rather than relying on idle detection.
 func (b *TmuxBridge) ContextUsagePercent(_ string) int {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Only check when Claude is idle at the prompt
-	busy, err := b.IsSessionBusy(ctx)
-	if err != nil || busy {
+	// Only check when Claude is idle
+	if !tmux.IsIdle(ctx) {
 		return -1
 	}
+
+	// Snapshot pane before pasting so we can detect new output
+	before, _ := tmux.CaptureVisible(ctx)
 
 	if err := tmux.PasteAndEnter(ctx, "/context"); err != nil {
 		return -1
 	}
 
-	// Wait for Claude to process the command and return to prompt
-	if err := tmux.WaitForIdle(ctx, 15*time.Second); err != nil {
-		return -1
+	// Poll until the context output pattern appears in the pane
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return -1
+		default:
+		}
+		time.Sleep(2 * time.Second)
+		out, err := tmux.CaptureVisible(ctx)
+		if err != nil {
+			continue
+		}
+		// Only parse if pane has changed (new output appeared)
+		if out == before {
+			continue
+		}
+		if pct := parseContextOutput(out); pct >= 0 {
+			return pct
+		}
 	}
-
-	out, err := tmux.CaptureVisible(ctx)
-	if err != nil {
-		return -1
-	}
-
-	return parseContextOutput(out)
+	return -1
 }
 
 // contextPctRe matches the summary line from /context output:
@@ -218,17 +221,21 @@ func (b *TmuxBridge) SendRaw(ctx context.Context, text string) error {
 }
 
 func buildPromptEnvelope(channel, chatID, userPrompt string) string {
-	return fmt.Sprintf(`<user-message source=%q chat_id=%q>
-%s
-</user-message>
+	var formattingDoc string
+	switch channel {
+	case "slack":
+		formattingDoc = "SLACK_MESSAGE_FORMATTING.md"
+	default:
+		formattingDoc = "TELEGRAM_MESSAGE_FORMATTING.md"
+	}
 
-<instructions>
-Respond to the user by piping your markdown response into:
-  ./goat send_user_message --chat %s
-
-See GOATED_CLI_README.md for formatting details.
-</instructions>
-`, channel, chatID, strings.TrimSpace(userPrompt), chatID)
+	return pydict.EncodeOrdered([]pydict.KV{
+		{"message", strings.TrimSpace(userPrompt)},
+		{"source", channel},
+		{"chat_id", chatID},
+		{"respond_with", fmt.Sprintf("./goat send_user_message --chat %s", chatID)},
+		{"formatting", formattingDoc},
+	})
 }
 
 func waitForClaudeReady(ctx context.Context, timeout time.Duration) error {

@@ -107,13 +107,18 @@ func waitForPromptLineChange(ctx context.Context, before string, timeout time.Du
 	return fmt.Errorf("timed out waiting for prompt line to change")
 }
 
-// WaitForIdle polls until Claude returns to the ❯ prompt.
-// Returns nil on success, error on timeout or context cancellation.
+// WaitForIdle polls until Claude returns to the ❯ prompt and the pane stops
+// changing. A single ❯ check is insufficient because the prompt is often
+// visible even while Claude is actively working. Instead we require the pane
+// content to be stable (unchanged across consecutive captures) AND contain ❯.
 func WaitForIdle(ctx context.Context, timeout time.Duration) error {
 	// Give Claude a moment to start processing
 	time.Sleep(3 * time.Second)
 
 	deadline := time.Now().Add(timeout)
+	var lastSnap string
+	stableCount := 0
+
 	for time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
@@ -121,17 +126,49 @@ func WaitForIdle(ctx context.Context, timeout time.Duration) error {
 		default:
 		}
 		out, err := CaptureVisible(ctx)
-		if err == nil {
-			lines := strings.Split(strings.TrimRight(out, "\n "), "\n")
-			for i := len(lines) - 1; i >= 0 && i >= len(lines)-5; i-- {
-				if strings.Contains(lines[i], "❯") {
-					return nil
-				}
+		if err != nil {
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		if out == lastSnap {
+			stableCount++
+			// Stable for 2 consecutive checks (4+ seconds) and has ❯ → idle
+			if stableCount >= 2 && HasPrompt(out) {
+				return nil
 			}
+		} else {
+			stableCount = 0
+			lastSnap = out
 		}
 		time.Sleep(2 * time.Second)
 	}
 	return fmt.Errorf("timed out waiting for Claude to return to prompt")
+}
+
+// IsIdle checks whether Claude is idle by capturing the pane twice with a
+// short delay. Returns true only if the pane is stable and contains ❯.
+func IsIdle(ctx context.Context) bool {
+	snap1, err := CaptureVisible(ctx)
+	if err != nil {
+		return false
+	}
+	time.Sleep(2 * time.Second)
+	snap2, err := CaptureVisible(ctx)
+	if err != nil {
+		return false
+	}
+	return snap1 == snap2 && HasPrompt(snap2)
+}
+
+// HasPrompt checks if ❯ appears in the last 5 lines of the pane output.
+func HasPrompt(paneOutput string) bool {
+	lines := strings.Split(strings.TrimRight(paneOutput, "\n "), "\n")
+	for i := len(lines) - 1; i >= 0 && i >= len(lines)-5; i-- {
+		if strings.Contains(lines[i], "❯") {
+			return true
+		}
+	}
+	return false
 }
 
 // API/transport error patterns that indicate a failed request (retryable).

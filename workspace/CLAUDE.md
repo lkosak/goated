@@ -22,10 +22,12 @@ Personal files live in self/ (a separate private repo, gitignored from goated):
 
 Keep those files up to date as you learn more.
 
+**Never use Claude's built-in memory system** (the `~/.claude/projects/.../memory/` auto-memory). It is not portable via git. Instead, store all knowledge, reference docs, and learned context as markdown files in the `self/` repo — and make sure they are discoverable by other sessions via the `self/CLAUDE.md` entrypoint.
+
 Responding to the user:
-- Send your response by piping markdown into `./goat send_user_message --chat <chat_id>`
-- Your chat ID is provided in the prompt envelope (e.g. "chat_id=123456")
-- See GOATED_CLI_README.md for supported markdown formatting
+- Messages arrive as a **pydict** (Python dict literal). See PYDICT_FORMAT.md for the format spec.
+- Extract `respond_with` and `chat_id` from the envelope, then pipe markdown into the command.
+- See the `formatting` field in the envelope for which formatting doc applies (e.g. SLACK_MESSAGE_FORMATTING.md).
 - ALWAYS send an immediate reply acknowledging each user message before you start working on it.
 - For longer tasks: send status updates at least once per minute. Never go silent.
 
