@@ -53,13 +53,16 @@ Both the **cron runner** and **Claude Code itself** can spawn subagents. The cro
 
 **Steady-state message flow:**
 
-1. User sends a Telegram message
-2. Gateway connector receives it via long-polling (or webhook)
-3. Gateway service checks Claude session health (auto-restarts if unhealthy)
-4. `TmuxBridge.SendAndWait()` pastes the prompt into the tmux pane running Claude Code
-5. Bridge polls the pane every 2s waiting for the `❯` prompt to reappear
-6. Claude Code processes the request and calls `./goat send_user_message --chat <id>`
-7. The `goat` binary reads markdown from Claude's stdout, converts it to Telegram HTML, and sends it back to the user via the Bot API
+1. User sends a message via Slack or Telegram
+2. Gateway connector receives it (Socket Mode for Slack, long-polling/webhook for Telegram)
+3. Gateway posts a feedback indicator — `_thinking..._` on Slack, typing animation on Telegram
+4. Gateway checks Claude session health (auto-restarts if unhealthy)
+5. The message is wrapped in a **pydict envelope** — a Python dict literal containing the message, source channel, chat ID, response command, and which formatting doc to use
+6. `TmuxBridge.SendAndWait()` pastes the envelope into the tmux pane via `tmux load-buffer` + `paste-buffer` and presses Enter
+7. The bridge polls the pane every 2s using **content-change idle detection**: the pane must be stable (unchanged across consecutive captures) AND contain the `❯` prompt to count as idle — a single prompt check isn't enough because `❯` is often visible while Claude is actively working
+8. Claude Code processes the request and pipes its markdown response into `./goat send_user_message --chat <id>`
+9. The `goat` CLI converts markdown to the appropriate format (Slack mrkdwn or Telegram HTML) and posts it via the platform API
+10. On Slack, the thinking indicator is deleted; if Claude is still busy (multi-message response), a new one is posted and reaped when Claude goes idle
 
 **Key design choice:** Claude Code sends its own replies. The gateway doesn't scrape output from tmux — instead, Claude is instructed (via `CLAUDE.md`) to pipe its response through the `goat` CLI. This makes the system stateless on the response path and avoids fragile scrollback parsing.
 
@@ -279,6 +282,20 @@ echo "Hello" | ./goat send_user_message --chat <chat_id>
 ./goat spawn-subagent --prompt "Run a background task"
 ```
 
+## Reliability features
+
+### Idle detection
+
+The daemon can't just check for the `❯` prompt — it's often visible even while Claude is actively working. Instead, it captures the tmux pane every 2 seconds and requires the content to be **stable** (unchanged across consecutive captures) **and** contain `❯`. This two-factor check prevents the gateway from sending a new message while Claude is mid-response.
+
+### Thinking indicators (Slack)
+
+On message receipt, the daemon posts `_thinking..._` to Slack. When Claude sends its reply via `goat send_user_message`, the CLI deletes the thinking message. If Claude is still busy (e.g. sending multiple messages), a new thinking indicator is posted and tracked. A TTL reaper acts as a safety net: soft deadline at 4 minutes (deletes if Claude is idle), hard deadline at 20 minutes (deletes unconditionally).
+
+### Auto-compaction
+
+Every 5 messages, the gateway pastes `/context` into the session and parses the token usage percentage. If usage exceeds 80%, it sends `/compact` and queues any incoming messages until compaction finishes, then flushes the queue.
+
 ## Self-healing
 
 - Session health checks detect auth failures, API errors, and connectivity issues
@@ -294,4 +311,4 @@ See [docs/OPENCLAW_MIGRATION.md](docs/OPENCLAW_MIGRATION.md) for credential migr
 
 ## License
 
-This project is dedicated to the public domain under [Creative Commons CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/).
+MIT License. Copyright (c) 2025-2026 Kyle Wild and Endgame Labs, Inc. See [LICENSE](LICENSE) for details.

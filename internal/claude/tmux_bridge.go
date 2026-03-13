@@ -235,6 +235,7 @@ func buildPromptEnvelope(channel, chatID, userPrompt string) string {
 		{"chat_id", chatID},
 		{"respond_with", fmt.Sprintf("./goat send_user_message --chat %s", chatID)},
 		{"formatting", formattingDoc},
+		{"instruction", "Send a plan message first if the task will take longer than 30s."},
 	})
 }
 

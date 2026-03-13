@@ -62,11 +62,13 @@ All three are statically-compiled Go. The daemon uses ~14 MB RSS. The `goat` CLI
 
 1. User sends a message via Slack or Telegram
 2. Gateway connector receives it (Socket Mode / polling / webhook)
-3. Gateway posts a "thinking..." indicator (Slack) or typing indicator (Telegram)
-4. `TmuxBridge.SendAndWait()` pastes the prompt into the tmux pane running Claude Code
-5. Claude Code processes the request and calls `./goat send_user_message --chat <id>`
-6. The `goat` binary reads markdown from stdin, converts it, and sends it back to the user
-7. On Slack, the thinking message is updated in-place with the real response
+3. Gateway posts a `_thinking..._` indicator (Slack) or typing animation (Telegram)
+4. Message is wrapped in a **pydict envelope** (Python dict literal with message, source, chat_id, respond_with, formatting)
+5. `TmuxBridge.SendAndWait()` pastes the envelope into the tmux pane via `tmux load-buffer` + `paste-buffer`
+6. Bridge polls for idle using **content-change detection**: pane must be stable (unchanged across consecutive 2s captures) AND contain `❯`
+7. Claude Code processes the request and pipes markdown into `./goat send_user_message --chat <id>`
+8. The `goat` CLI converts markdown to platform format (Slack mrkdwn / Telegram HTML) and posts it
+9. On Slack, the thinking indicator is deleted; if Claude is still busy, a new one is posted and reaped on idle
 
 **Key design choice:** Claude Code sends its own replies. The gateway doesn't scrape output from tmux — Claude is instructed to pipe its response through the `goat` CLI.
 
@@ -77,7 +79,8 @@ All three are statically-compiled Go. The daemon uses ~14 MB RSS. The `goat` CLI
 - **Auto-compact:** checks context usage every 5 messages by pasting `/context` into the session. If usage exceeds 80%, sends `/compact` and queues incoming messages until done.
 - **Retry on API errors:** detects 5xx/overloaded errors in the pane and retries up to 2 times.
 - **Session health:** detects auth failures, API errors, connectivity issues. Auto-restarts up to 5 times. DMs admin if recovery fails.
-- **Thinking indicator (Slack):** posts `_thinking..._` on message receipt, updates it in-place with the real response via `chat.update`.
+- **Thinking indicator (Slack):** posts `_thinking..._` on message receipt, deletes it when Claude responds. TTL reaper (4min soft / 20min hard) prevents orphaned indicators.
+- **Idle detection:** content-change based — requires pane to be stable (unchanged across 2s captures) AND contain `❯`. A single prompt check is insufficient because `❯` is visible while Claude is working.
 
 ## Cron system
 
