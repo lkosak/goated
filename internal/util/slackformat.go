@@ -16,14 +16,92 @@ var (
 	mdBackslashEscape = regexp.MustCompile(`\\([!.\-()#\[\]{}+>|_~])`)
 )
 
+// isTableLine returns true if the line looks like a markdown table row (starts/ends with |).
+func isTableLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	return len(trimmed) > 1 && trimmed[0] == '|' && trimmed[len(trimmed)-1] == '|'
+}
+
+// isTableSeparator returns true for lines like |---|---|---| (separator rows).
+func isTableSeparator(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if !isTableLine(line) {
+		return false
+	}
+	inner := trimmed[1 : len(trimmed)-1]
+	for _, c := range inner {
+		if c != '-' && c != ':' && c != ' ' && c != '|' {
+			return false
+		}
+	}
+	return true
+}
+
+// parseTableCells splits a markdown table row into trimmed cell values.
+func parseTableCells(line string) []string {
+	trimmed := strings.TrimSpace(line)
+	// Strip leading/trailing pipes
+	inner := trimmed[1 : len(trimmed)-1]
+	parts := strings.Split(inner, "|")
+	cells := make([]string, len(parts))
+	for i, p := range parts {
+		cells[i] = strings.TrimSpace(p)
+	}
+	return cells
+}
+
+// formatTableBlock converts collected markdown table rows into a clean
+// aligned code block without pipe characters.
+func formatTableBlock(rows [][]string) []string {
+	if len(rows) == 0 {
+		return nil
+	}
+
+	// Find max width for each column
+	numCols := 0
+	for _, row := range rows {
+		if len(row) > numCols {
+			numCols = len(row)
+		}
+	}
+	widths := make([]int, numCols)
+	for _, row := range rows {
+		for i, cell := range row {
+			if len(cell) > widths[i] {
+				widths[i] = len(cell)
+			}
+		}
+	}
+
+	// Build aligned lines
+	var result []string
+	result = append(result, "```")
+	for _, row := range rows {
+		var parts []string
+		for i := 0; i < numCols; i++ {
+			cell := ""
+			if i < len(row) {
+				cell = row[i]
+			}
+			// Pad to column width
+			padded := cell + strings.Repeat(" ", widths[i]-len(cell))
+			parts = append(parts, padded)
+		}
+		result = append(result, strings.Join(parts, "   "))
+	}
+	result = append(result, "```")
+	return result
+}
+
 // MarkdownToSlackMrkdwn converts standard markdown to Slack's mrkdwn format.
-// Handles bold, italic, strikethrough, code blocks, headers, and lists.
-// Inline code and code blocks pass through unchanged since both formats
-// use backtick syntax.
+// Handles bold, italic, strikethrough, code blocks, headers, lists, and tables.
+// Markdown tables are automatically converted to clean aligned code blocks
+// since Slack has no native table support.
 func MarkdownToSlackMrkdwn(md string) string {
 	lines := strings.Split(md, "\n")
 	var out []string
 	inCodeBlock := false
+	var tableRows [][]string
 
 	for _, line := range lines {
 		// Code blocks pass through unchanged
@@ -37,6 +115,18 @@ func MarkdownToSlackMrkdwn(md string) string {
 			continue
 		}
 
+		// Table handling: collect rows, then flush as aligned code block
+		if isTableLine(line) {
+			if isTableSeparator(line) {
+				continue
+			}
+			tableRows = append(tableRows, parseTableCells(line))
+			continue
+		} else if len(tableRows) > 0 {
+			out = append(out, formatTableBlock(tableRows)...)
+			tableRows = nil
+		}
+
 		// Headers → bold (Slack has no header rendering)
 		if m := headerRe.FindStringSubmatch(line); m != nil {
 			out = append(out, "*"+convertSlackInline(m[2])+"*")
@@ -44,6 +134,11 @@ func MarkdownToSlackMrkdwn(md string) string {
 		}
 
 		out = append(out, convertSlackInline(line))
+	}
+
+	// Flush any trailing table
+	if len(tableRows) > 0 {
+		out = append(out, formatTableBlock(tableRows)...)
 	}
 
 	return strings.Join(out, "\n")
