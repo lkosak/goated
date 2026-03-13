@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
@@ -37,6 +38,7 @@ type Connector struct {
 
 	mu         sync.Mutex
 	thinkingTS string // timestamp of the current "_thinking..._" message
+	seenEvents map[string]bool // dedup retried Slack events
 }
 
 // NewConnector creates a Slack connector.
@@ -61,10 +63,11 @@ func NewConnector(botToken, appToken, channelID string, store OffsetStore) (*Con
 		socketmode.OptionLog(log.New(os.Stderr, "slack-socket: ", log.Lshortfile|log.LstdFlags)))
 
 	return &Connector{
-		api:       api,
-		socket:    socket,
-		store:     store,
-		channelID: channelID,
+		api:        api,
+		socket:     socket,
+		store:      store,
+		channelID:  channelID,
+		seenEvents: make(map[string]bool),
 	}, nil
 }
 
@@ -79,7 +82,7 @@ func (c *Connector) Run(ctx context.Context, handler gateway.Handler) error {
 					continue
 				}
 				c.socket.Ack(*evt.Request)
-				c.handleEventsAPI(ctx, handler, eventsAPIEvent)
+				go c.handleEventsAPI(ctx, handler, eventsAPIEvent)
 
 			case socketmode.EventTypeConnecting:
 				fmt.Fprintln(os.Stderr, "Slack Socket Mode: connecting...")
@@ -131,6 +134,15 @@ func (c *Connector) handleEventsAPI(ctx context.Context, handler gateway.Handler
 			return
 		}
 
+		// Deduplicate retried events from Slack using message timestamp
+		c.mu.Lock()
+		if c.seenEvents[ev.TimeStamp] {
+			c.mu.Unlock()
+			return
+		}
+		c.seenEvents[ev.TimeStamp] = true
+		c.mu.Unlock()
+
 		// Redirect messages from non-monitored channels
 		if ev.Channel != c.channelID {
 			_ = c.SendMessage(ctx, ev.Channel,
@@ -162,7 +174,7 @@ func (c *Connector) handleEventsAPI(ctx context.Context, handler gateway.Handler
 // SendMessage sends a message to the specified Slack channel, converting
 // markdown to Slack's mrkdwn format. Clears any active thinking indicator first.
 func (c *Connector) SendMessage(_ context.Context, channelID, text string) error {
-	wasThinking := c.clearThinkingIfNeeded(channelID)
+	c.clearThinkingIfNeeded(channelID)
 
 	mrkdwn := util.MarkdownToSlackMrkdwn(text)
 
@@ -178,16 +190,12 @@ func (c *Connector) SendMessage(_ context.Context, channelID, text string) error
 		}
 	}
 
-	// If we cleared a thinking indicator, check if Claude is still working
-	// and re-post thinking if so.
-	if wasThinking {
-		c.repostThinkingIfBusy(channelID)
-	}
 	return nil
 }
 
 // postThinking posts a "_thinking..._" message and records its timestamp
 // so it can be updated with the real response or deleted later.
+// Also spawns a TTL reaper to guarantee cleanup even if normal paths fail.
 func (c *Connector) postThinking(channel string) {
 	_, ts, err := c.api.PostMessage(channel,
 		slack.MsgOptionText("_thinking..._", false),
@@ -199,11 +207,12 @@ func (c *Connector) postThinking(channel string) {
 	c.thinkingTS = ts
 	c.mu.Unlock()
 	_ = os.WriteFile(ThinkingFile, []byte(ts), 0644)
+	go reapThinkingIndicator(c.api, channel, ts)
 }
 
 // clearThinkingIfNeeded deletes the thinking message if it's still present.
-// It checks the file to avoid deleting a message that the CLI already updated.
-// Returns true if a thinking indicator was actually cleared.
+// Returns true if a thinking indicator was active (whether we deleted it or
+// the CLI already did).
 func (c *Connector) clearThinkingIfNeeded(channel string) bool {
 	c.mu.Lock()
 	ts := c.thinkingTS
@@ -212,32 +221,66 @@ func (c *Connector) clearThinkingIfNeeded(channel string) bool {
 	if ts == "" {
 		return false
 	}
-	// If the file is gone, the CLI already handled the message (updated it
-	// with the real response), so don't delete it.
-	if _, err := os.Stat(ThinkingFile); err != nil {
-		return true // was thinking, CLI handled it
-	}
+	// Delete both the file and the Slack message; if the CLI already
+	// deleted them, these are harmless no-ops.
 	_ = os.Remove(ThinkingFile)
 	_, _, _ = c.api.DeleteMessage(channel, ts)
 	return true
 }
 
-// repostThinkingIfBusy checks if Claude is still working (no ❯ prompt visible)
-// and posts a new thinking indicator if so.
-func (c *Connector) repostThinkingIfBusy(channel string) {
-	ctx := context.Background()
-	out, err := tmux.CaptureVisible(ctx)
-	if err != nil {
+// reapThinkingIndicator is a TTL safety net for thinking indicators.
+// Soft deadline: 4 minutes — deletes if Claude is idle.
+// If Claude is still busy, rechecks every minute.
+// Hard deadline: 20 minutes — deletes unconditionally.
+func reapThinkingIndicator(api *slack.Client, channel, ts string) {
+	const softDeadline = 4 * time.Minute
+	const hardDeadline = 20 * time.Minute
+	const recheckInterval = 1 * time.Minute
+
+	time.Sleep(softDeadline)
+
+	// If the file is already gone, another path cleaned it up — we're done.
+	if !thinkingFileHasTS(ts) {
 		return
 	}
-	lines := strings.Split(strings.TrimRight(out, "\n "), "\n")
-	for i := len(lines) - 1; i >= 0 && i >= len(lines)-5; i-- {
-		if strings.Contains(lines[i], "❯") {
-			return // Claude is idle
+
+	ctx := context.Background()
+	hardCutoff := time.Now().Add(hardDeadline - softDeadline)
+
+	for {
+		if time.Now().After(hardCutoff) {
+			break // hard deadline reached, delete unconditionally
+		}
+		if tmux.IsIdle(ctx) {
+			break // Claude is idle, safe to delete
+		}
+		time.Sleep(recheckInterval)
+		if !thinkingFileHasTS(ts) {
+			return // cleaned up by normal path while we waited
 		}
 	}
-	// Still busy — post new thinking indicator
-	c.postThinking(channel)
+
+	// Delete the Slack message (no-op if already deleted)
+	_, _, _ = api.DeleteMessage(channel, ts)
+	// Only remove ThinkingFile if it still holds our timestamp
+	if thinkingFileHasTS(ts) {
+		_ = os.Remove(ThinkingFile)
+	}
+	fmt.Fprintf(os.Stderr, "TTL reaper cleaned up thinking indicator %s in channel %s\n", ts, channel)
+}
+
+// thinkingFileHasTS returns true if ThinkingFile exists and contains the given timestamp.
+func thinkingFileHasTS(ts string) bool {
+	data, err := os.ReadFile(ThinkingFile)
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(data)) == ts
+}
+
+// ReapThinkingIndicator is the exported version for use by CLI processes.
+func ReapThinkingIndicator(api *slack.Client, channel, ts string) {
+	reapThinkingIndicator(api, channel, ts)
 }
 
 // splitMessage breaks a message into chunks that fit Slack's size limit.

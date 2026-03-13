@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -110,39 +111,32 @@ func sendViaSlack(cfg app.Config, channelID, text string) error {
 	client := slackapi.New(token)
 	mrkdwn := util.MarkdownToSlackMrkdwn(text)
 
-	// If there's a thinking indicator, update it with the real response
-	replacedThinking := false
+	// If there's a thinking indicator, delete it before posting the real response
+	hadThinking := false
 	if data, err := os.ReadFile(slackpkg.ThinkingFile); err == nil && len(data) > 0 {
 		_ = os.Remove(slackpkg.ThinkingFile)
 		ts := strings.TrimSpace(string(data))
-		_, _, _, err := client.UpdateMessage(channelID, ts,
-			slackapi.MsgOptionText(mrkdwn, false),
-			slackapi.MsgOptionDisableLinkUnfurl(),
-		)
-		if err == nil {
-			fmt.Fprintf(os.Stderr, "Updated thinking message in channel %s (%d chars)\n", channelID, len(text))
-			replacedThinking = true
-		} else {
-			fmt.Fprintf(os.Stderr, "Failed to update thinking message: %v, posting new\n", err)
-		}
+		_, _, _ = client.DeleteMessage(channelID, ts)
+		hadThinking = true
 	}
 
-	if !replacedThinking {
-		_, _, err := client.PostMessage(channelID,
-			slackapi.MsgOptionText(mrkdwn, false),
-			slackapi.MsgOptionDisableLinkUnfurl(),
-		)
-		if err != nil {
-			return fmt.Errorf("send slack message: %w", err)
-		}
-		fmt.Fprintf(os.Stderr, "Message sent to channel %s (%d chars)\n", channelID, len(text))
+	// Post the real response as a new message
+	_, _, err := client.PostMessage(channelID,
+		slackapi.MsgOptionText(mrkdwn, false),
+		slackapi.MsgOptionDisableLinkUnfurl(),
+	)
+	if err != nil {
+		return fmt.Errorf("send slack message: %w", err)
 	}
+	fmt.Fprintf(os.Stderr, "Message sent to channel %s (%d chars)\n", channelID, len(text))
 
-	// If we replaced a thinking indicator, check if Claude is still busy.
-	// If so, post a new thinking message so the user knows more is coming.
-	if replacedThinking {
+	// If we cleared a thinking indicator, check if Claude is still busy.
+	// If so, post a new thinking indicator, then poll for idle and clean it up.
+	if hadThinking {
 		if isClaudeBusy() {
 			postSlackThinking(client, channelID)
+			// Wait for Claude to go idle, then delete the thinking indicator
+			waitAndClearThinking(client, channelID)
 		}
 	}
 
@@ -150,25 +144,48 @@ func sendViaSlack(cfg app.Config, channelID, text string) error {
 }
 
 
-// isClaudeBusy checks the tmux pane — returns true if Claude is still working
-// (no ❯ prompt in the last few lines).
+// isClaudeBusy checks whether Claude is still working by confirming the pane
+// is actively changing for at least 1 second. Takes two snapshots 1s apart;
+// if both differ from each other, Claude is busy.
 func isClaudeBusy() bool {
-	ctx := context.Background()
-	out, err := tmux.CaptureVisible(ctx)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	snap1, err := tmux.CaptureVisible(ctx)
 	if err != nil {
 		return false
 	}
-	lines := strings.Split(strings.TrimRight(out, "\n "), "\n")
-	for i := len(lines) - 1; i >= 0 && i >= len(lines)-5; i-- {
-		if strings.Contains(lines[i], "❯") {
-			return false // idle
-		}
+	time.Sleep(1 * time.Second)
+	snap2, err := tmux.CaptureVisible(ctx)
+	if err != nil {
+		return false
 	}
-	return true
+	return snap1 != snap2
+}
+
+// waitAndClearThinking polls until Claude goes idle, then deletes any
+// remaining thinking indicator. If another send_user_message call runs first
+// and clears the ThinkingFile, this is a no-op.
+func waitAndClearThinking(client *slackapi.Client, channelID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	// Poll for idle (pane stable + ❯ prompt)
+	tmux.WaitForIdle(ctx, 5*time.Minute)
+
+	// If ThinkingFile still exists, delete the thinking message
+	data, err := os.ReadFile(slackpkg.ThinkingFile)
+	if err != nil || len(data) == 0 {
+		return // another send_user_message already handled it
+	}
+	_ = os.Remove(slackpkg.ThinkingFile)
+	ts := strings.TrimSpace(string(data))
+	_, _, _ = client.DeleteMessage(channelID, ts)
+	fmt.Fprintf(os.Stderr, "Cleaned up orphaned thinking indicator in channel %s\n", channelID)
 }
 
 // postSlackThinking posts a new "_thinking..._" indicator and writes the
 // ThinkingFile so the next send_user_message call can replace it.
+// Also spawns a TTL reaper as a safety net against orphaned indicators.
 func postSlackThinking(client *slackapi.Client, channelID string) {
 	_, ts, err := client.PostMessage(channelID,
 		slackapi.MsgOptionText("_thinking..._", false),
@@ -177,6 +194,7 @@ func postSlackThinking(client *slackapi.Client, channelID string) {
 		return
 	}
 	_ = os.WriteFile(slackpkg.ThinkingFile, []byte(ts), 0644)
+	go slackpkg.ReapThinkingIndicator(client, channelID, ts)
 }
 
 func init() {
