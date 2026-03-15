@@ -61,7 +61,8 @@ func (s *Service) HandleMessage(ctx context.Context, msg IncomingMessage, respon
 	ctx = s.handleCtx(ctx)
 
 	text := strings.TrimSpace(msg.Text)
-	if text == "" {
+	msg.Text = text
+	if text == "" && len(msg.Attachments) == 0 {
 		return nil
 	}
 
@@ -111,7 +112,7 @@ func (s *Service) HandleMessage(ctx context.Context, msg IncomingMessage, respon
 		}
 	}
 
-	return s.sendWithRetry(ctx, msg, responder, text)
+	return s.sendWithRetry(ctx, msg, responder)
 }
 
 const maxSendRetries = 2
@@ -119,9 +120,9 @@ const postSendTimeout = 5 * time.Minute
 
 // sendWithRetry sends a message to the active runtime and monitors for API errors.
 // If a retryable error is detected, it re-sends up to maxSendRetries times.
-func (s *Service) sendWithRetry(ctx context.Context, msg IncomingMessage, responder Responder, text string) error {
+func (s *Service) sendWithRetry(ctx context.Context, msg IncomingMessage, responder Responder) error {
 	for attempt := 0; attempt <= maxSendRetries; attempt++ {
-		if err := s.Session.SendUserPrompt(ctx, msg.Channel, msg.ChatID, text); err != nil {
+		if err := s.Session.SendUserPrompt(ctx, msg.Channel, msg.ChatID, msg.Text, msgAttachments(msg)); err != nil {
 			return responder.SendMessage(ctx, msg.ChatID, s.friendlyError(err))
 		}
 
@@ -217,7 +218,7 @@ func (s *Service) compactAndFlush(ctx context.Context, triggerMsg IncomingMessag
 
 	// Flush all queued messages to tmux
 	for _, qm := range queue {
-		if err := s.Session.SendUserPrompt(ctx, qm.msg.Channel, qm.msg.ChatID, qm.msg.Text); err != nil {
+		if err := s.Session.SendUserPrompt(ctx, qm.msg.Channel, qm.msg.ChatID, qm.msg.Text, msgAttachments(qm.msg)); err != nil {
 			_ = qm.responder.SendMessage(ctx, qm.msg.ChatID, s.friendlyError(err))
 		}
 	}
@@ -317,6 +318,36 @@ func (s *Service) waitForSessionIdle(ctx context.Context, timeout time.Duration)
 
 func (s *Service) runtimeDisplayName() string {
 	return s.Session.Descriptor().DisplayName
+}
+
+// msgAttachments converts gateway attachment data into the agent-layer struct.
+// Returns nil if the message has no attachments.
+func msgAttachments(msg IncomingMessage) *agent.MessageAttachments {
+	if len(msg.Attachments) == 0 && len(msg.AttachmentsFailed) == 0 && len(msg.AttachmentsSucceeded) == 0 {
+		return nil
+	}
+	convert := func(results []AttachmentResult) []agent.AttachmentInfo {
+		out := make([]agent.AttachmentInfo, 0, len(results))
+		for _, r := range results {
+			out = append(out, agent.AttachmentInfo{
+				Index:      r.Index,
+				FileID:     r.FileID,
+				Filename:   r.Filename,
+				Path:       r.Path,
+				Outcome:    r.Outcome,
+				ReasonCode: r.ReasonCode,
+				Reason:     r.Reason,
+				Bytes:      r.Bytes,
+				MIMEType:   r.MIMEType,
+			})
+		}
+		return out
+	}
+	return &agent.MessageAttachments{
+		Paths:     msg.Attachments,
+		Failed:    convert(msg.AttachmentsFailed),
+		Succeeded: convert(msg.AttachmentsSucceeded),
+	}
 }
 
 func (s *Service) friendlyError(err error) string {

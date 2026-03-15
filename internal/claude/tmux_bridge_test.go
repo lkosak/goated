@@ -1,7 +1,6 @@
 package claude
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -54,78 +53,5 @@ func TestParseContextOutput(t *testing.T) {
 				t.Errorf("parseContextOutput(%q) = %d, want %d", tt.in, got, tt.want)
 			}
 		})
-	}
-}
-
-func TestBuildPromptEnvelope_Slack(t *testing.T) {
-	result := buildPromptEnvelope("slack", "C12345", "hello world", []string{"workspace/tmp/slack/attachments/a.png"}, []map[string]any{{"reason_code": "too_large"}}, []map[string]any{{"path": "workspace/tmp/slack/attachments/a.png"}})
-
-	if !strings.Contains(result, `"message"`) {
-		t.Error("missing message key")
-	}
-	if !strings.Contains(result, "hello world") {
-		t.Error("missing user prompt")
-	}
-	if !strings.Contains(result, `"source"`) {
-		t.Error("missing source key")
-	}
-	if !strings.Contains(result, "slack") {
-		t.Error("missing slack source value")
-	}
-	if !strings.Contains(result, "SLACK_MESSAGE_FORMATTING.md") {
-		t.Error("should use SLACK formatting doc for slack channel")
-	}
-	if !strings.Contains(result, "C12345") {
-		t.Error("missing chat_id")
-	}
-	if !strings.Contains(result, `./goat send_user_message --chat C12345`) {
-		t.Error("missing respond_with command")
-	}
-	if !strings.Contains(result, `"attachments_failed"`) {
-		t.Error("missing attachments_failed key")
-	}
-	if !strings.Contains(result, `"reason_code": "too_large"`) {
-		t.Error("missing failed attachment reason_code")
-	}
-	if !strings.Contains(result, `"attachments_succeeded"`) {
-		t.Error("missing attachments_succeeded key")
-	}
-}
-
-func TestBuildPromptEnvelope_Telegram(t *testing.T) {
-	result := buildPromptEnvelope("telegram", "999", "test msg", nil, nil, nil)
-
-	if !strings.Contains(result, "TELEGRAM_MESSAGE_FORMATTING.md") {
-		t.Error("should use TELEGRAM formatting doc for telegram channel")
-	}
-	if !strings.Contains(result, "telegram") {
-		t.Error("missing telegram source")
-	}
-}
-
-func TestBuildPromptEnvelope_UnknownChannelDefaultsTelegram(t *testing.T) {
-	result := buildPromptEnvelope("unknown", "111", "test", nil, nil, nil)
-	if !strings.Contains(result, "TELEGRAM_MESSAGE_FORMATTING.md") {
-		t.Error("unknown channel should default to telegram formatting doc")
-	}
-}
-
-func TestBuildPromptEnvelope_TrimWhitespace(t *testing.T) {
-	result := buildPromptEnvelope("slack", "C1", "  hello  ", nil, nil, nil)
-	if !strings.Contains(result, "hello") {
-		t.Error("missing trimmed message")
-	}
-	// The prompt should be trimmed
-	if strings.Contains(result, "  hello  ") {
-		t.Error("message was not trimmed")
-	}
-}
-
-func TestBuildPromptEnvelope_IsPydictFormat(t *testing.T) {
-	result := buildPromptEnvelope("slack", "C1", "test", nil, nil, nil)
-	// Should start with { and end with }
-	trimmed := strings.TrimSpace(result)
-	if !strings.HasPrefix(trimmed, "{") || !strings.HasSuffix(trimmed, "}") {
-		t.Errorf("expected pydict format (dict literal), got: %s", trimmed)
 	}
 }

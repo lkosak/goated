@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"goated/internal/agent"
-	"goated/internal/pydict"
 	"goated/internal/tmux"
 	"goated/internal/util"
 )
@@ -105,12 +104,12 @@ func (s *SessionRuntime) ResetConversation(ctx context.Context, _ string) (agent
 	}, nil
 }
 
-func (s *SessionRuntime) SendUserPrompt(ctx context.Context, channel, chatID, userPrompt string) error {
+func (s *SessionRuntime) SendUserPrompt(ctx context.Context, channel, chatID, userPrompt string, _ *agent.MessageAttachments) error {
 	if err := s.EnsureSession(ctx); err != nil {
 		return err
 	}
 	s.markSend()
-	return tmux.PasteAndEnterFor(ctx, s.sessionName(), buildPromptEnvelope(channel, chatID, userPrompt))
+	return tmux.PasteAndEnterFor(ctx, s.sessionName(), agent.BuildPromptEnvelope(channel, chatID, userPrompt, nil))
 }
 
 func (s *SessionRuntime) SendControlCommand(ctx context.Context, text string) error {
@@ -390,25 +389,6 @@ func (s *SessionRuntime) sessionName() string {
 		return s.SessionName
 	}
 	return "goat_codex_main"
-}
-
-func buildPromptEnvelope(channel, chatID, userPrompt string) string {
-	var formattingDoc string
-	switch channel {
-	case "slack":
-		formattingDoc = "SLACK_MESSAGE_FORMATTING.md"
-	default:
-		formattingDoc = "TELEGRAM_MESSAGE_FORMATTING.md"
-	}
-
-	return pydict.EncodeOrdered([]pydict.KV{
-		{"message", strings.TrimSpace(userPrompt)},
-		{"source", channel},
-		{"chat_id", chatID},
-		{"respond_with", fmt.Sprintf("./goat send_user_message --chat %s", chatID)},
-		{"formatting", formattingDoc},
-		{"instruction", "Send a plan message first if the task will take longer than 30s."},
-	})
 }
 
 func parseStatusEstimate(output string) (int, string) {

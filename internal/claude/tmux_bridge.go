@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"goated/internal/agent"
-	"goated/internal/pydict"
 	"goated/internal/tmux"
 )
 
@@ -45,15 +44,15 @@ func (b *TmuxBridge) Descriptor() agent.RuntimeDescriptor {
 }
 
 func (b *TmuxBridge) SendAndWait(ctx context.Context, channel, chatID string, userPrompt string, _ time.Duration) error {
-	return b.SendUserPrompt(ctx, channel, chatID, userPrompt)
+	return b.SendUserPrompt(ctx, channel, chatID, userPrompt, nil)
 }
 
-func (b *TmuxBridge) SendUserPrompt(ctx context.Context, channel, chatID string, userPrompt string) error {
+func (b *TmuxBridge) SendUserPrompt(ctx context.Context, channel, chatID string, userPrompt string, attachments *agent.MessageAttachments) error {
 	if err := b.EnsureSession(ctx); err != nil {
 		return err
 	}
 
-	wrapped := buildPromptEnvelope(channel, chatID, userPrompt)
+	wrapped := agent.BuildPromptEnvelope(channel, chatID, userPrompt, attachments)
 	return tmux.PasteAndEnterFor(ctx, b.sessionName(), wrapped)
 }
 
@@ -371,25 +370,6 @@ func (b *TmuxBridge) Version(ctx context.Context) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
-}
-
-func buildPromptEnvelope(channel, chatID, userPrompt string) string {
-	var formattingDoc string
-	switch channel {
-	case "slack":
-		formattingDoc = "SLACK_MESSAGE_FORMATTING.md"
-	default:
-		formattingDoc = "TELEGRAM_MESSAGE_FORMATTING.md"
-	}
-
-	return pydict.EncodeOrdered([]pydict.KV{
-		{"message", strings.TrimSpace(userPrompt)},
-		{"source", channel},
-		{"chat_id", chatID},
-		{"respond_with", fmt.Sprintf("./goat send_user_message --chat %s", chatID)},
-		{"formatting", formattingDoc},
-		{"instruction", "Send a plan message first if the task will take longer than 30s."},
-	})
 }
 
 func waitForClaudeReady(ctx context.Context, timeout time.Duration) error {

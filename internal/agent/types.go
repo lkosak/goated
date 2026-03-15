@@ -85,13 +85,34 @@ type HealthStatus struct {
 	Summary     string
 }
 
+// AttachmentInfo describes a single attachment result (success or failure).
+type AttachmentInfo struct {
+	Index      int
+	FileID     string
+	Filename   string
+	Path       string
+	Outcome    string // "ok" or "failed"
+	ReasonCode string // e.g. "unsupported_type", "too_large", "download_failed"
+	Reason     string
+	Bytes      int64
+	MIMEType   string
+}
+
+// MessageAttachments carries attachment metadata alongside a user prompt.
+// A nil value means the message has no attachments.
+type MessageAttachments struct {
+	Paths     []string         // local file paths of successfully downloaded attachments
+	Failed    []AttachmentInfo // attachments that failed to download/validate
+	Succeeded []AttachmentInfo // attachments that were successfully saved
+}
+
 type SessionRuntime interface {
 	Descriptor() RuntimeDescriptor
 	EnsureSession(ctx context.Context) error
 	StopSession(ctx context.Context) error
 	RestartSession(ctx context.Context) error
 	ResetConversation(ctx context.Context, chatID string) (ResetResult, error)
-	SendUserPrompt(ctx context.Context, channel, chatID, userPrompt string) error
+	SendUserPrompt(ctx context.Context, channel, chatID, userPrompt string, attachments *MessageAttachments) error
 	SendControlCommand(ctx context.Context, text string) error
 	GetContextEstimate(ctx context.Context, chatID string) (ContextEstimate, error)
 	GetSessionState(ctx context.Context) (SessionState, error)
