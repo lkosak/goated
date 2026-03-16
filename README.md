@@ -13,7 +13,7 @@ A self-healing bridge between Slack/Telegram and an interactive agent runtime. G
 ### Dependencies
 
 - **Go matching `go.mod`** — all binaries are compiled from this repo
-- **tmux** — hosts the persistent interactive runtime session
+- **tmux** — hosts the persistent interactive runtime session (only needed for TUI runtimes)
 - **One agent runtime CLI** — `claude` for Claude Code or `codex` for Codex
 - **Telegram Bot API** — user-facing interface (bot token from [@BotFather](https://t.me/BotFather))
 - **bbolt** — embedded key-value database (no external DB server)
@@ -35,9 +35,9 @@ For a detailed comparison of token usage, file sizes, and memory overhead vs. Op
 ### How it works
 
 ```
-┌──────────┐         ┌──────────────┐     paste    ┌──────────────────────────┐
-│ Telegram │ ──────> │   Gateway    │ ───────────> │  Active Runtime (tmux)   │
-│   User   │         │  (polling/   │              │  interactive session     │
+┌──────────┐         ┌──────────────┐ prompt/paste ┌──────────────────────────┐
+│ Telegram │ ──────> │   Gateway    │ ───────────> │  Active Runtime          │
+│   User   │         │  (polling/   │              │  (headless or tmux)      │
 │          │ <────── │   webhook)   │ <──────────  │                          │
 └──────────┘         └──────────────┘  exec        └──────────────────────────┘
     ^                    │                           │            │
@@ -69,7 +69,7 @@ Both the **cron runner** and the **active runtime session** can spawn subagents.
 
 **Key design choice:** the runtime sends its own replies. The gateway doesn't scrape output from tmux — instead, the runtime is instructed through the workspace contract to pipe its response through the `goat` CLI. This makes the system stateless on the response path and avoids fragile scrollback parsing.
 
-**Subagents and cron jobs** run as headless runtime processes (not in the tmux session). Claude uses `claude -p`; Codex uses `codex exec`. Each gets its own process, tracked in bbolt with PID and status. The cron runner skips a job if its previous run is still in-flight, preventing pile-ups from long-running tasks.
+**Subagents and cron jobs** run as headless runtime processes (not in the tmux session). All Claude-backed runtimes use `claude -p`; `codex_tui` uses `codex exec`. Each gets its own process, tracked in bbolt with PID and status. The cron runner skips a job if its previous run is still in-flight, preventing pile-ups from long-running tasks.
 
 ### Folder structure
 
@@ -96,8 +96,9 @@ goated/
 ├── internal/
 │   ├── app/config.go           # .env loader and config struct
 │   ├── agent/                  # Provider-neutral runtime contracts
-│   ├── claude/                 # Claude runtime implementations
-│   ├── codex/                  # Codex runtime implementations
+│   ├── claude/                 # Claude headless runtime (claude -p --resume, hooks-based)
+│   ├── claudetui/              # Claude TUI runtime implementations (tmux-based)
+│   ├── codextui/               # Codex TUI runtime implementations (tmux-based)
 │   ├── cron/runner.go          # Cron scheduler (1min tick, dedup, 1hr timeout)
 │   ├── db/db.go                # bbolt store (open-per-op, no held locks)
 │   ├── gateway/
@@ -179,10 +180,10 @@ to your identity, memory, and project files regularly.
 ### Prerequisites
 
 - Go matching `go.mod` (currently `1.25.0`)
-- tmux
+- tmux (only needed for TUI runtimes: `claude_tui`, `codex_tui`)
 - A Telegram bot token (from [@BotFather](https://t.me/BotFather))
 - One runtime CLI installed and authenticated:
-  - Claude Code (`claude`)
+  - Claude Code (`claude`) — used by both `claude` and `claude_tui` runtimes
   - Codex (`codex`)
 
 ### Machine bootstrap
@@ -233,7 +234,7 @@ All env vars:
 | Variable                            | Default               | Description                                       |
 | ----------------------------------- | --------------------- | ------------------------------------------------- |
 | `GOAT_TELEGRAM_BOT_TOKEN`           | (required)            | Telegram bot API token                            |
-| `GOAT_AGENT_RUNTIME`                | `claude`              | `claude` or `codex`                               |
+| `GOAT_AGENT_RUNTIME`                | `claude`              | `claude`, `claude_tui`, or `codex_tui`            |
 | `GOAT_DEFAULT_TIMEZONE`             | `America/Los_Angeles` | Timezone for cron schedules                       |
 | `GOAT_TELEGRAM_MODE`                | `polling`             | `polling` or `webhook`                            |
 | `GOAT_ADMIN_CHAT_ID`                | (optional)            | Chat ID for admin alerts when auto-recovery fails |
@@ -280,7 +281,9 @@ The active runtime sends replies directly via `./goat send_user_message --chat <
 
 ```sh
 ./goated runtime status
-./goated runtime switch codex
+./goated runtime switch claude          # headless (default, no tmux)
+./goated runtime switch claude_tui      # TUI mode (tmux-based)
+./goated runtime switch codex_tui
 ./goated runtime cleanup
 ```
 

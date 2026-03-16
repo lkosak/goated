@@ -10,8 +10,9 @@
 ├── internal/
 │   ├── app/             # Config (env vars, .env loading)
 │   ├── agent/           # Provider-neutral runtime contracts
-│   ├── claude/          # Claude runtime implementations
-│   ├── codex/           # Codex runtime implementations
+│   ├── claude/          # Claude headless runtime (claude -p --resume, hooks-based)
+│   ├── claudetui/       # Claude TUI runtime implementations (tmux-based)
+│   ├── codextui/        # Codex TUI runtime implementations (tmux-based)
 │   ├── cron/            # Cron runner
 │   ├── db/              # BoltDB persistence (crons, subagent runs, meta)
 │   ├── gateway/         # Gateway service (message routing, auto-compact, retry)
@@ -43,9 +44,9 @@ Both are statically-compiled Go. The daemon uses ~14 MB RSS. The `goat` CLI is e
 ## How it works
 
 ```
-┌──────────┐         ┌──────────────┐     paste    ┌──────────────────────────┐
-│  Slack/  │ ──────> │   Gateway    │ ───────────> │  Active Runtime (tmux)   │
-│ Telegram │         │   Daemon     │              │  interactive session     │
+┌──────────┐         ┌──────────────┐  prompt/paste ┌──────────────────────────┐
+│  Slack/  │ ──────> │   Gateway    │ ───────────> │  Active Runtime          │
+│ Telegram │         │   Daemon     │              │  (headless or tmux)      │
 │   User   │ <────── │              │ <──────────  │                          │
 └──────────┘         └──────────────┘  exec        └──────────────────────────┘
     ^                    │                           │            │
@@ -66,15 +67,15 @@ Both are statically-compiled Go. The daemon uses ~14 MB RSS. The `goat` CLI is e
 2. Gateway connector receives it (Socket Mode / polling / webhook)
 3. Gateway posts a `_thinking..._` indicator (Slack) or typing animation (Telegram)
 4. Message is wrapped in a **pydict envelope** (Python dict literal with message, source, chat_id, respond_with, formatting)
-5. The selected session runtime pastes the envelope into the tmux pane via `tmux load-buffer` + `paste-buffer`
-6. Bridge polls for idle using **content-change detection**: pane must be stable (unchanged across consecutive 2s captures) AND contain `❯`
+5. The selected session runtime delivers the envelope: `claude` runtime spawns `claude -p --resume <sid>` as a subprocess; TUI runtimes paste into the tmux pane
+6. Idle detection varies by runtime: `claude` blocks on process exit; TUI runtimes poll with content-change detection (stable pane + `❯` prompt)
 7. The active runtime processes the request and pipes markdown into `./goat send_user_message --chat <id>`
 8. The `goat` CLI converts markdown to platform format (Slack mrkdwn / Telegram HTML) and posts it
 9. On Slack, the thinking indicator is deleted; if the runtime is still busy, a new one is posted and reaped on idle
 
 **Key design choice:** the runtime sends its own replies. The gateway doesn't scrape output from tmux — the runtime is instructed to pipe its response through the `goat` CLI.
 
-**Subagents and cron jobs** run as headless runtime processes (not in the tmux session). Claude uses `claude -p`; Codex uses `codex exec`. Each gets its own process, tracked in BoltDB with PID and status.
+**Subagents and cron jobs** run as headless runtime processes (not in the tmux session). All Claude-backed runtimes (`claude` and `claude_tui`) use `claude -p`; `codex_tui` uses `codex exec`. Each gets its own process, tracked in BoltDB with PID and status.
 
 ## Gateway features
 
@@ -98,7 +99,7 @@ All config via environment variables or `.env` in the repo root:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `GOAT_GATEWAY` | `telegram` | `slack` or `telegram` |
-| `GOAT_AGENT_RUNTIME` | `claude` | `claude` or `codex` |
+| `GOAT_AGENT_RUNTIME` | `claude` | `claude`, `claude_tui`, or `codex_tui` |
 | `GOAT_SLACK_BOT_TOKEN` | | Bot User OAuth Token (xoxb-...) |
 | `GOAT_SLACK_APP_TOKEN` | | App-Level Token (xapp-...) for Socket Mode |
 | `GOAT_SLACK_CHANNEL_ID` | | Monitored Slack DM channel |
