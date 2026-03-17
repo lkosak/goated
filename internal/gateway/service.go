@@ -12,6 +12,7 @@ import (
 
 	"goated/internal/agent"
 	"goated/internal/db"
+	"goated/internal/msglog"
 )
 
 const contextCheckInterval = 5     // check context every N messages
@@ -27,6 +28,8 @@ type Service struct {
 	Store           *db.Store
 	DefaultTimezone string
 	AdminChatID     string // chat ID for escalation alerts
+	MsgLogger       *msglog.Logger
+	SessionIDPath   string // path to claude session ID file for lifecycle tracking
 
 	// DrainCtx is a context that stays alive during graceful shutdown so
 	// in-flight handlers can finish. Set this to a context that only cancels
@@ -66,24 +69,35 @@ func (s *Service) HandleMessage(ctx context.Context, msg IncomingMessage, respon
 		return nil
 	}
 
+	// Generate request ID for message correlation
+	requestID := msglog.NewRequestID()
+	ctx = msglog.WithRequestID(ctx, requestID)
+
 	switch {
 	case strings.EqualFold(text, "/clear"):
+		s.logCommand(requestID, "clear", msg.ChatID)
 		result, err := s.Session.ResetConversation(ctx, msg.ChatID)
 		if err != nil {
 			return responder.SendMessage(ctx, msg.ChatID, "Failed to clear session: "+err.Error())
 		}
 		return responder.SendMessage(ctx, msg.ChatID, result.Summary)
 	case strings.EqualFold(text, "/chatid"):
+		s.logCommand(requestID, "chatid", msg.ChatID)
 		return responder.SendMessage(ctx, msg.ChatID, fmt.Sprintf("Your chat ID is: %s", msg.ChatID))
 	case strings.EqualFold(text, "/context"):
+		s.logCommand(requestID, "context", msg.ChatID)
 		estimate, err := s.Session.GetContextEstimate(ctx, msg.ChatID)
 		if err != nil || estimate.State != agent.ContextEstimateKnown {
 			return responder.SendMessage(ctx, msg.ChatID, "Could not read context usage right now.")
 		}
 		return responder.SendMessage(ctx, msg.ChatID, fmt.Sprintf("Context usage: %d%%", estimate.PercentUsed))
 	case strings.HasPrefix(text, "/schedule "):
+		s.logCommand(requestID, "schedule", msg.ChatID)
 		return s.handleScheduleCommand(ctx, msg, responder)
 	}
+
+	// Log the user message with status=pending
+	s.logUserMessage(requestID, msg, msglog.StatusPending)
 
 	// If we're currently compacting, queue this message
 	s.mu.Lock()
@@ -115,14 +129,55 @@ func (s *Service) HandleMessage(ctx context.Context, msg IncomingMessage, respon
 	return s.sendWithRetry(ctx, msg, responder)
 }
 
+// logUserMessage logs a user message if the logger is configured.
+func (s *Service) logUserMessage(requestID string, msg IncomingMessage, status msglog.MessageStatus) {
+	if s.MsgLogger == nil {
+		return
+	}
+	s.MsgLogger.LogUserMessage(requestID, msglog.UserMessageData{
+		Channel:         msg.Channel,
+		ChatID:          msg.ChatID,
+		UserID:          msg.UserID,
+		Text:            msg.Text,
+		MessageID:       msg.MessageID,
+		ThreadID:        msg.ThreadID,
+		HasAttachments:  len(msg.Attachments) > 0,
+		AttachmentCount: len(msg.Attachments),
+	}, status)
+}
+
+// logCommand logs a command invocation if the logger is configured.
+func (s *Service) logCommand(requestID, name, chatID string) {
+	if s.MsgLogger == nil {
+		return
+	}
+	s.MsgLogger.LogCommand(requestID, msglog.CommandData{Name: name, ChatID: chatID})
+}
+
+// logEvent logs a system event if the logger is configured.
+func (s *Service) logEvent(requestID string, event msglog.EventData) {
+	if s.MsgLogger == nil {
+		return
+	}
+	s.MsgLogger.LogEvent(requestID, event)
+}
+
 const maxSendRetries = 2
 const postSendTimeout = 5 * time.Minute
 
 // sendWithRetry sends a message to the active runtime and monitors for API errors.
 // If a retryable error is detected, it re-sends up to maxSendRetries times.
 func (s *Service) sendWithRetry(ctx context.Context, msg IncomingMessage, responder Responder) error {
+	requestID := msglog.RequestIDFromContext(ctx)
+
+	// Track session changes for session file management
+	prevSessionID := s.readSessionID()
+
 	for attempt := 0; attempt <= maxSendRetries; attempt++ {
+		s.logStatus(requestID, msglog.EntryUserMessage, msglog.StatusSentToAgent)
+
 		if err := s.Session.SendUserPrompt(ctx, msg.Channel, msg.ChatID, msg.Text, msgAttachments(msg), msg.MessageID, msg.ThreadID); err != nil {
+			s.logEvent(requestID, msglog.EventData{Name: "send_failed", Detail: err.Error()})
 			return responder.SendMessage(ctx, msg.ChatID, s.friendlyError(err))
 		}
 
@@ -133,6 +188,8 @@ func (s *Service) sendWithRetry(ctx context.Context, msg IncomingMessage, respon
 		if idleErr != nil {
 			fmt.Fprintf(os.Stderr, "[%s] WaitForAwaitingInput: %v (suppressed)\n",
 				time.Now().Format(time.RFC3339), idleErr)
+			// Don't update status — leave as sent_to_agent; if claude is still
+			// working, goat send_user_message will log the response later.
 			return nil
 		}
 		if !state.SafeIdle() {
@@ -145,9 +202,12 @@ func (s *Service) sendWithRetry(ctx context.Context, msg IncomingMessage, respon
 
 		apiErr := s.Session.DetectRetryableError(ctx)
 		if apiErr == "" {
+			s.logStatus(requestID, msglog.EntryUserMessage, msglog.StatusAgentReceived)
+			s.detectSessionChange(requestID, prevSessionID)
 			return nil
 		}
 
+		s.logEvent(requestID, msglog.EventData{Name: "api_error", Detail: apiErr})
 		fmt.Fprintf(os.Stderr, "[%s] API error after send (attempt %d/%d): %s\n",
 			time.Now().Format(time.RFC3339), attempt+1, maxSendRetries+1, apiErr)
 
@@ -163,6 +223,43 @@ func (s *Service) sendWithRetry(ctx context.Context, msg IncomingMessage, respon
 
 	return responder.SendMessage(ctx, msg.ChatID,
 		s.runtimeDisplayName()+" hit an API error and retries didn't help. Try again in a minute, or use /clear if it persists.")
+}
+
+// logStatus updates the status of a message if the logger is configured.
+func (s *Service) logStatus(requestID string, entryType msglog.EntryType, status msglog.MessageStatus) {
+	if s.MsgLogger == nil || requestID == "" {
+		return
+	}
+	s.MsgLogger.UpdateStatus(requestID, entryType, status)
+}
+
+// readSessionID reads the current Claude session ID from the session ID file.
+func (s *Service) readSessionID() string {
+	if s.SessionIDPath == "" {
+		return ""
+	}
+	data, err := os.ReadFile(s.SessionIDPath)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// detectSessionChange checks if the session ID changed and triggers a new
+// session file if the logger is configured.
+func (s *Service) detectSessionChange(requestID, prevSessionID string) {
+	if s.MsgLogger == nil {
+		return
+	}
+	newSessionID := s.readSessionID()
+	if newSessionID == "" || newSessionID == prevSessionID {
+		return
+	}
+	seq := s.MsgLogger.SessionManager().NewSession(newSessionID)
+	s.logEvent(requestID, msglog.EventData{
+		Name:   "session_start",
+		Detail: fmt.Sprintf("session=%s seq=%s", newSessionID, seq),
+	})
 }
 
 // compactAndFlush triggers /compact on the active runtime session, queues the trigger

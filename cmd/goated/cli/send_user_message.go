@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"goated/internal/app"
+	"goated/internal/msglog"
 	runtimepkg "goated/internal/runtime"
 	slackpkg "goated/internal/slack"
 	"goated/internal/util"
@@ -52,17 +53,37 @@ Example:
 			return fmt.Errorf("empty message; pipe markdown into stdin")
 		}
 
-		switch cfg.Gateway {
-		case "slack":
-			if err := sendViaSlack(cfg, chatID, text); err != nil {
-				return err
-			}
-		default: // "telegram"
-			if err := sendViaTelegram(cfg, chatID, text); err != nil {
-				return err
-			}
+		// Set up message logging
+		requestID := os.Getenv("GOAT_REQUEST_ID")
+		if requestID == "" {
+			requestID = msglog.NewRequestID()
+		}
+		logger := msglog.NewCLILogger(cfg.LogDir, cfg.DefaultTimezone, cfg.WorkspaceDir)
+
+		responseData := msglog.AgentResponseData{
+			ChatID:  chatID,
+			Gateway: cfg.Gateway,
+			Text:    text,
+			TextLen: len(text),
 		}
 
+		// Log pending response
+		logger.LogAgentResponse(requestID, responseData, msglog.StatusPending, "")
+
+		var sendErr error
+		switch cfg.Gateway {
+		case "slack":
+			sendErr = sendViaSlack(cfg, chatID, text)
+		default: // "telegram"
+			sendErr = sendViaTelegram(cfg, chatID, text)
+		}
+
+		if sendErr != nil {
+			logger.LogAgentResponse(requestID, responseData, msglog.StatusFailed, sendErr.Error())
+			return sendErr
+		}
+
+		logger.UpdateStatus(requestID, msglog.EntryAgentResponse, msglog.StatusSent)
 		return nil
 	},
 }
