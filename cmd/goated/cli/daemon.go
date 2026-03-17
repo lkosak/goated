@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	cronpkg "goated/internal/cron"
 	"goated/internal/db"
 	"goated/internal/gateway"
+	"goated/internal/msglog"
 	runtimepkg "goated/internal/runtime"
 	slackpkg "goated/internal/slack"
 	"goated/internal/telegram"
@@ -112,6 +114,40 @@ var daemonRunCmd = &cobra.Command{
 			return fmt.Errorf("runtime validation: %w", err)
 		}
 
+		// Initialize message logger
+		msgLogger, err := msglog.NewLogger(cfg.LogDir, cfg.WorkspaceDir, cfg.DefaultTimezone)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[%s] warning: message logger init failed: %v\n",
+				time.Now().Format(time.RFC3339), err)
+			// Non-fatal — continue without message logging
+		}
+
+		// Initialize session file with current session ID (if one exists)
+		if msgLogger != nil {
+			sessionIDPath := filepath.Join(cfg.LogDir, "claude_session", "session_id")
+			if data, err := os.ReadFile(sessionIDPath); err == nil {
+				sid := strings.TrimSpace(string(data))
+				if sid != "" {
+					msgLogger.SessionManager().NewSession(sid)
+				}
+			}
+		}
+
+		// Replay stuck messages from previous run
+		if msgLogger != nil {
+			go func() {
+				stuck, err := msglog.FindStuckMessages(msgLogger)
+				if err != nil || len(stuck) == 0 {
+					return
+				}
+				fmt.Fprintf(os.Stderr, "[%s] found %d stuck message(s), replaying...\n",
+					time.Now().Format(time.RFC3339), len(stuck))
+				replayCtx, replayCancel := context.WithTimeout(context.Background(), 10*time.Minute)
+				defer replayCancel()
+				msglog.ReplayStuckMessages(replayCtx, msgLogger, runtime.Session(), stuck)
+			}()
+		}
+
 		drainCtx, drainCancel := context.WithCancel(context.Background())
 		defer drainCancel()
 
@@ -120,11 +156,16 @@ var daemonRunCmd = &cobra.Command{
 			Store:           store,
 			DefaultTimezone: cfg.DefaultTimezone,
 			AdminChatID:     cfg.AdminChatID,
+			MsgLogger:       msgLogger,
+			SessionIDPath:   filepath.Join(cfg.LogDir, "claude_session", "session_id"),
 			DrainCtx:        drainCtx,
 		}
 
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
+
+		// Start daily re-redaction goroutine
+		go runReRedact(ctx, cfg.LogDir, cfg.WorkspaceDir, cfg.DefaultTimezone)
 
 		var runGateway func() error
 
@@ -558,6 +599,36 @@ func stripNL(s string) string {
 		s = s[:len(s)-1]
 	}
 	return s
+}
+
+// runReRedact re-redacts recent log files on startup and then hourly.
+// On startup it scrubs yesterday + today (date-based) and the last 10 session
+// files. Every hour it scrubs the 2 most recent files of every log type
+// (daily, audit, sessions, hooks, runs), locking each file appropriately
+// since one may be actively written to.
+func runReRedact(ctx context.Context, logDir, workspaceDir, timezone string) {
+	tz, err := time.LoadLocation(timezone)
+	if err != nil {
+		tz = time.FixedZone("UTC", 0)
+	}
+
+	// Startup: broad scrub of yesterday + today + recent sessions
+	yesterday := time.Now().In(tz).AddDate(0, 0, -1).Format("2006-01-02")
+	msglog.ReRedactDate(logDir, workspaceDir, yesterday)
+	msglog.ReRedactDate(logDir, workspaceDir, time.Now().In(tz).Format("2006-01-02"))
+	msglog.ReRedactRecentSessions(logDir, workspaceDir, 10)
+
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			msglog.ReRedactRecentAll(logDir, workspaceDir, 2)
+		}
+	}
 }
 
 func init() {
