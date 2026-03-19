@@ -58,6 +58,36 @@ Also direct the user to give the agent its own email account. Recommend:
 - Prefer short, helpful, everyday phrasing.
 - Only introduce technical details when they are useful to the user.
 
+## How to present onboarding progress
+
+During the onboarding conversation:
+- render the current onboarding TODO state as a code block
+- use `[x]` for completed items and `[ ]` for remaining items
+- update that code block as items are completed so the user can see progress
+- after showing the code block, present the remaining next-step options as a numbered list
+- let the user guide which numbered item to do next when there is a real choice
+- keep the numbered list aligned with `MISSION_TODO.md`
+
+Example format:
+
+```text
+Current onboarding TODOs:
+
+[x] Explain the `self/` repo layout
+[x] Explain the built-in scheduled jobs
+[ ] Ask questions to fill in `USER.md`, `IDENTITY.md`, and `MEMORY.md`
+[ ] Ask whether browser automation should be configured
+[ ] Recommend giving the agent its own email account
+
+Which one do you want to do next?
+1. Fill in profile, identity, and memory details
+2. Decide whether to set up browser automation
+3. Decide whether to set up an email inbox
+```
+
+When there is no meaningful choice, continue the next required item directly and
+still show the updated TODO code block.
+
 ## Required onboarding questions
 
 Ask enough questions to populate:

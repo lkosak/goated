@@ -8,6 +8,34 @@ A self-healing bridge between Slack/Telegram and an interactive agent runtime. G
 
 > **For AI agents working on this codebase:** see [CODEBASE.md](CODEBASE.md) for architecture and [AGENTS.md](AGENTS.md) for build/run instructions.
 
+## Quickstart
+
+1. Clone the repo:
+
+```sh
+git clone https://github.com/dorkitude/goated.git
+cd goated
+```
+
+2. Run the bootstrapper:
+
+```sh
+./bootstrap.sh
+```
+
+After bootstrap, you'll find a folder at `workspace/self`. That directory is its own Git repo and is meant to keep version-controlled history of the agent's tools, knowledge, prompts, and settings.
+
+We recommend connecting `workspace/self` to a private remote on GitHub, GitLab, or another Git host so you can push it and preserve the agent's history independently of the main `goated` repo.
+
+Example:
+
+```sh
+cd workspace/self
+git remote add origin git@github.com:your-org/agent-self.git
+git branch -M main
+git push -u origin main
+```
+
 ## Architecture
 
 ### Dependencies
@@ -154,18 +182,19 @@ Everything committed in `workspace/` is **depersonalized and reusable** — it's
 - `HEARTBEAT.md` — heartbeat/pulse config and prompts
 - Projects, notes, drafts, tools, and anything else the agent creates
 
-**We recommend making `workspace/self/` its own private Git repo.** This lets the agent:
+Bootstrap creates `workspace/self/` as its own Git repo. We recommend connecting it to a private remote. This lets the agent:
 
 - Version its own identity, memory, and project files
 - Push/pull independently of the goated platform
 - Survive workspace resets without losing accumulated context
 
-To set this up:
+For example:
 
 ```sh
 cd workspace/self
-git init
 git remote add origin git@github.com:your-org/agent-self.git
+git branch -M main
+git push -u origin main
 ```
 
 Then add to `workspace/self/AGENTS.md` or similar:

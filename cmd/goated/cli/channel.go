@@ -169,7 +169,7 @@ func promptChannel(reader *bufio.Reader) (*db.Channel, error) {
 		return nil, fmt.Errorf("channel name is required")
 	}
 
-	chType := prompt(reader, "Type (telegram/slack)", "telegram")
+	chType := prompt(reader, "Type (telegram/slack)", "slack")
 	if chType != "telegram" && chType != "slack" {
 		return nil, fmt.Errorf("type must be telegram or slack")
 	}
