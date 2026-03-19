@@ -115,6 +115,9 @@ var bootstrapCmd = &cobra.Command{
 		} else {
 			fmt.Println("Added hourly sync_self_to_github system cron.")
 		}
+		if err := ensureDefaultSelfCrons(store, cfg.WorkspaceDir, tz); err != nil {
+			return err
+		}
 
 		fmt.Println()
 		repoRoot, _ := os.Getwd()
@@ -125,6 +128,52 @@ var bootstrapCmd = &cobra.Command{
 		fmt.Println("Bootstrap complete.")
 		return nil
 	},
+}
+
+func ensureDefaultSelfCrons(store *db.Store, workspaceDir, timezone string) error {
+	selfDir := filepath.Join(workspaceDir, "self")
+
+	defaults := []struct {
+		schedule   string
+		promptFile string
+		label      string
+	}{
+		{
+			schedule:   "0 * * * *",
+			promptFile: filepath.Join(selfDir, "HEARTBEAT.md"),
+			label:      "hourly heartbeat",
+		},
+		{
+			schedule:   "0 */8 * * *",
+			promptFile: filepath.Join(selfDir, "prompts", "knowledge_extraction.md"),
+			label:      "knowledge extraction",
+		},
+	}
+
+	existing, err := store.AllCrons()
+	if err != nil {
+		return fmt.Errorf("list crons: %w", err)
+	}
+
+	for _, def := range defaults {
+		found := false
+		for _, job := range existing {
+			if job.Type == "subagent" && job.PromptFile == def.promptFile {
+				found = true
+				break
+			}
+		}
+		if found {
+			fmt.Printf("Default %s cron already exists.\n", def.label)
+			continue
+		}
+		if _, err := store.AddCron("subagent", "", def.schedule, "", def.promptFile, "", timezone, true); err != nil {
+			return fmt.Errorf("add default %s cron: %w", def.label, err)
+		}
+		fmt.Printf("Added default %s cron.\n", def.label)
+	}
+
+	return nil
 }
 
 func runBootstrapPostSetup(repoRoot string) error {
