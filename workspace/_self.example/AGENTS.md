@@ -5,6 +5,8 @@ kind: self_instructions
 
 # AGENTS.md
 
+#IMPORTANT:  Do `MISSIONS/ONBOARD_USER/MISSION.md` first!  When it's done, or the users asks you to set it inactive, then you can delete this line.
+
 This directory is a reusable example of a private `self/` repo for Goated.
 
 It shows three things:
