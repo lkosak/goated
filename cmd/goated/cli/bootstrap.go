@@ -85,6 +85,10 @@ var bootstrapCmd = &cobra.Command{
 			return fmt.Errorf("mkdir workspace: %w", err)
 		}
 		fmt.Println("Workspace directory:", cfg.WorkspaceDir)
+		fmt.Println()
+		if err := ensureSeededSelfRepo(cfg.WorkspaceDir, os.Stdout); err != nil {
+			return err
+		}
 
 		// Save channel to DB
 		if err := store.AddChannel(*ch); err != nil {

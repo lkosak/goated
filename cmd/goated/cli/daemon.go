@@ -365,36 +365,7 @@ func handleDaemonSocketConn(ctx context.Context, conn net.Conn, responder gatewa
 }
 
 func ensureSelfRepo(workspaceDir string) error {
-	if workspaceDir == "" {
-		return fmt.Errorf("workspace directory is not configured")
-	}
-
-	selfDir := filepath.Join(workspaceDir, "self")
-	info, err := os.Stat(selfDir)
-	switch {
-	case err == nil:
-		if !info.IsDir() {
-			return fmt.Errorf("workspace self path %s is not a directory", selfDir)
-		}
-		return nil
-	case !os.IsNotExist(err):
-		return fmt.Errorf("stat %s: %w", selfDir, err)
-	}
-
-	if err := os.MkdirAll(selfDir, 0o755); err != nil {
-		return fmt.Errorf("mkdir %s: %w", selfDir, err)
-	}
-
-	cmd := exec.Command("git", "init")
-	cmd.Dir = selfDir
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("git init in %s: %w: %s", selfDir, err, strings.TrimSpace(string(output)))
-	}
-
-	fmt.Fprintf(os.Stderr, "[%s] initialized workspace self repo at %s\n",
-		time.Now().Format(time.RFC3339), selfDir)
-	return nil
+	return ensureSeededSelfRepo(workspaceDir, os.Stderr)
 }
 
 var daemonRestartCmd = &cobra.Command{
