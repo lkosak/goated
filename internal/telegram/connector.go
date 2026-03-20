@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"fmt"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -287,6 +288,78 @@ func (c *Connector) SendMessage(_ context.Context, chatID, text string) error {
 		return fmt.Errorf("send telegram message: %w", err)
 	}
 	return nil
+}
+
+func (c *Connector) SendMedia(_ context.Context, chatID, filePath, caption, mediaType string) error {
+	chat, err := strconv.ParseInt(chatID, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid chat id %q: %w", chatID, err)
+	}
+	if strings.TrimSpace(filePath) == "" {
+		return fmt.Errorf("file path is required")
+	}
+	if _, err := os.Stat(filePath); err != nil {
+		return fmt.Errorf("stat file %s: %w", filePath, err)
+	}
+
+	resolvedType := telegramMediaType(filePath, mediaType)
+	htmlCaption := util.MarkdownToTelegramHTML(caption)
+
+	switch resolvedType {
+	case "photo":
+		msg := tgbotapi.NewPhoto(chat, tgbotapi.FilePath(filePath))
+		msg.Caption = htmlCaption
+		msg.ParseMode = "HTML"
+		if _, err := c.bot.Send(msg); err == nil {
+			return nil
+		}
+
+		msg = tgbotapi.NewPhoto(chat, tgbotapi.FilePath(filePath))
+		msg.Caption = caption
+		_, err := c.bot.Send(msg)
+		if err != nil {
+			return fmt.Errorf("send telegram photo: %w", err)
+		}
+		return nil
+
+	case "document":
+		msg := tgbotapi.NewDocument(chat, tgbotapi.FilePath(filePath))
+		msg.Caption = htmlCaption
+		msg.ParseMode = "HTML"
+		if _, err := c.bot.Send(msg); err == nil {
+			return nil
+		}
+
+		msg = tgbotapi.NewDocument(chat, tgbotapi.FilePath(filePath))
+		msg.Caption = caption
+		_, err := c.bot.Send(msg)
+		if err != nil {
+			return fmt.Errorf("send telegram document: %w", err)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported telegram media type %q", resolvedType)
+	}
+}
+
+func telegramMediaType(filePath, requested string) string {
+	requested = strings.ToLower(strings.TrimSpace(requested))
+	switch requested {
+	case "photo", "document":
+		return requested
+	}
+
+	ext := strings.ToLower(filepath.Ext(filePath))
+	mimeType := mime.TypeByExtension(ext)
+	if strings.HasPrefix(mimeType, "image/") {
+		return "photo"
+	}
+	switch ext {
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp":
+		return "photo"
+	default:
+		return "document"
+	}
 }
 
 func (c *Connector) sendTyping(chatID int64) {

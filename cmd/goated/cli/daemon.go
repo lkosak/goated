@@ -279,7 +279,10 @@ var daemonRunCmd = &cobra.Command{
 type daemonSendRequest struct {
 	RequestID string `json:"request_id"`
 	ChatID    string `json:"chat_id"`
-	Text      string `json:"text"`
+	Text      string `json:"text,omitempty"`
+	FilePath  string `json:"file_path,omitempty"`
+	Caption   string `json:"caption,omitempty"`
+	MediaType string `json:"media_type,omitempty"`
 }
 
 type daemonSendResponse struct {
@@ -328,28 +331,59 @@ func handleDaemonSocketConn(ctx context.Context, conn net.Conn, responder gatewa
 		return
 	}
 	req.Text = strings.TrimSpace(req.Text)
-	if req.Text == "" {
-		_ = json.NewEncoder(conn).Encode(daemonSendResponse{OK: false, Error: "text is required"})
+	req.FilePath = strings.TrimSpace(req.FilePath)
+	req.Caption = strings.TrimSpace(req.Caption)
+	req.MediaType = strings.TrimSpace(req.MediaType)
+	if req.Text == "" && req.FilePath == "" {
+		_ = json.NewEncoder(conn).Encode(daemonSendResponse{OK: false, Error: "text or file_path is required"})
+		return
+	}
+	if req.Text != "" && req.FilePath != "" {
+		_ = json.NewEncoder(conn).Encode(daemonSendResponse{OK: false, Error: "text and file_path are mutually exclusive"})
 		return
 	}
 
 	if logger != nil {
+		logText := req.Text
+		if req.FilePath != "" {
+			logText = req.Caption
+			if logText == "" {
+				logText = fmt.Sprintf("[media:%s] %s", withDefault(req.MediaType, "auto"), req.FilePath)
+			}
+		}
 		logger.LogAgentResponse(req.RequestID, msglog.AgentResponseData{
 			ChatID:  req.ChatID,
 			Gateway: gatewayName,
-			Text:    req.Text,
-			TextLen: len(req.Text),
+			Text:    logText,
+			TextLen: len(logText),
 		}, msglog.StatusPending, "")
 	}
 
-	sendErr := responder.SendMessage(ctx, req.ChatID, req.Text)
+	var sendErr error
+	if req.FilePath != "" {
+		mediaResponder, ok := responder.(gateway.MediaResponder)
+		if !ok {
+			sendErr = fmt.Errorf("gateway %s does not support outbound media yet", gatewayName)
+		} else {
+			sendErr = mediaResponder.SendMedia(ctx, req.ChatID, req.FilePath, req.Caption, req.MediaType)
+		}
+	} else {
+		sendErr = responder.SendMessage(ctx, req.ChatID, req.Text)
+	}
 	if sendErr != nil {
 		if logger != nil {
+			logText := req.Text
+			if req.FilePath != "" {
+				logText = req.Caption
+				if logText == "" {
+					logText = fmt.Sprintf("[media:%s] %s", withDefault(req.MediaType, "auto"), req.FilePath)
+				}
+			}
 			logger.LogAgentResponse(req.RequestID, msglog.AgentResponseData{
 				ChatID:  req.ChatID,
 				Gateway: gatewayName,
-				Text:    req.Text,
-				TextLen: len(req.Text),
+				Text:    logText,
+				TextLen: len(logText),
 			}, msglog.StatusFailed, sendErr.Error())
 		}
 		_ = json.NewEncoder(conn).Encode(daemonSendResponse{OK: false, Error: sendErr.Error()})

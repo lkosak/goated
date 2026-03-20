@@ -31,6 +31,10 @@ type Responder interface {
 	SendMessage(ctx context.Context, chatID, text string) error
 }
 
+type MediaResponder interface {
+	SendMedia(ctx context.Context, chatID, filePath, caption, mediaType string) error
+}
+
 type Handler interface {
 	HandleMessage(ctx context.Context, msg IncomingMessage, responder Responder) error
 	HandleBatchMessage(ctx context.Context, msgs []IncomingMessage, responder Responder) error
