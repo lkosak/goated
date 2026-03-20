@@ -38,6 +38,21 @@ Write standard markdown. The CLI auto-converts it for the active gateway. For ch
 
 These flags are typically included in the `send_user_message` command provided in your prompt. Use them as given.
 
+Use `send_user_file` to send a local file or screenshot back to the user:
+
+```sh
+./goat send_user_file --chat <chat_id> --path /tmp/screenshot.png
+./goat send_user_file --chat <chat_id> --path /tmp/report.pdf --caption "Latest report"
+./goat send_user_file --chat <chat_id> --path /tmp/screenshot.png --type photo
+```
+
+### `send_user_file` notes
+
+- `--path` must be a local file path on disk.
+- `--type auto` chooses `photo` for common image formats and `document` otherwise.
+- `--caption` is optional.
+- Media delivery currently depends on gateway support; Telegram supports this path.
+
 ### Important notes
 
 - The `--chat` flag is required. Your chat ID is provided in the prompt envelope.
