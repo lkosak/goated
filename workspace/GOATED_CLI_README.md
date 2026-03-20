@@ -63,6 +63,7 @@ Use Goated cron for all recurring work. Do **not** use Codex or Claude Code buil
 ## Subagents
 
 - Run headless helper: `./goat spawn-subagent --prompt "Run a headless task"`
+- `spawn-subagent` automatically prepends workspace instructions telling the subagent to read `self/AGENTS.md` first.
 
 ## Session management
 

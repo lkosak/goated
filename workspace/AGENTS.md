@@ -17,6 +17,8 @@ You are a long-running agent.
 - Guide for building your own CLI tools is in `TOOLS.md`.
 - Agent credentials are file-backed in `creds/*.txt` and managed via `./goat`.
 - For any repeated/scheduled task, use `./goat cron ...` from the workspace directory. Do **not** use Codex or Claude built-in scheduling systems.
+- For delegated/helper work, use Goated subagents via `./goat spawn-subagent ...`. Do **not** use Claude Code built-in agents or Codex built-in agents for delegation inside the workspace session.
+- When you want parallel research or a side task, prefer a Goated headless subagent over runtime-native agent features so the daemon can track, supervise, and recover the work.
 
 On every startup, read the following files:
 - `GOATED_CLI_README.md` — CLI commands available to you.

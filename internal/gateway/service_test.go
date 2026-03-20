@@ -43,6 +43,41 @@ func (s stubRuntime) GetHealth(context.Context) (agent.HealthStatus, error) {
 func (s stubRuntime) DetectRetryableError(context.Context) string { return "" }
 func (s stubRuntime) Version(context.Context) string              { return "" }
 
+type recoverRuntime struct {
+	restartCalls int
+}
+
+func (r *recoverRuntime) Descriptor() agent.RuntimeDescriptor {
+	return agent.RuntimeDescriptor{DisplayName: "Claude Code TUI"}
+}
+func (r *recoverRuntime) EnsureSession(context.Context) error  { return nil }
+func (r *recoverRuntime) StopSession(context.Context) error    { return nil }
+func (r *recoverRuntime) RestartSession(context.Context) error { r.restartCalls++; return nil }
+func (r *recoverRuntime) ResetConversation(context.Context, string) (agent.ResetResult, error) {
+	return agent.ResetResult{}, nil
+}
+func (r *recoverRuntime) SendUserPrompt(context.Context, string, string, string, *agent.MessageAttachments, string, string) error {
+	return nil
+}
+func (r *recoverRuntime) SendBatchPrompt(context.Context, string, string, []agent.PromptMessage) error {
+	return nil
+}
+func (r *recoverRuntime) SendControlCommand(context.Context, string) error { return nil }
+func (r *recoverRuntime) GetContextEstimate(context.Context, string) (agent.ContextEstimate, error) {
+	return agent.ContextEstimate{}, nil
+}
+func (r *recoverRuntime) GetSessionState(context.Context) (agent.SessionState, error) {
+	return agent.SessionState{Kind: agent.SessionStateUnknownStable, Summary: "pane is stable without a prompt"}, nil
+}
+func (r *recoverRuntime) WaitForAwaitingInput(context.Context, time.Duration) (agent.SessionState, error) {
+	return agent.SessionState{}, errors.New("timed out waiting for Claude session to become idle")
+}
+func (r *recoverRuntime) GetHealth(context.Context) (agent.HealthStatus, error) {
+	return agent.HealthStatus{OK: true, Recoverable: true, Summary: "ok"}, nil
+}
+func (r *recoverRuntime) DetectRetryableError(context.Context) string { return "" }
+func (r *recoverRuntime) Version(context.Context) string              { return "" }
+
 func newTestService() *Service {
 	return &Service{Session: stubRuntime{}}
 }
@@ -121,5 +156,21 @@ func TestFriendlyError_WrappedCanceled(t *testing.T) {
 	want := "The bot was restarted while processing your message. Please send it again."
 	if got != want {
 		t.Errorf("wrapped canceled: got %q, want %q", got, want)
+	}
+}
+
+func TestTryRecoverAfterIdleTimeout_RestartsRecoverableSession(t *testing.T) {
+	rt := &recoverRuntime{}
+	svc := &Service{Session: rt}
+
+	recovered, err := svc.tryRecoverAfterIdleTimeout(context.Background(), "", "chat-1", errors.New("timed out waiting for Claude session to become idle"))
+	if err != nil {
+		t.Fatalf("tryRecoverAfterIdleTimeout returned error: %v", err)
+	}
+	if !recovered {
+		t.Fatal("expected stalled session recovery to restart the runtime")
+	}
+	if rt.restartCalls != 1 {
+		t.Fatalf("expected exactly one restart, got %d", rt.restartCalls)
 	}
 }

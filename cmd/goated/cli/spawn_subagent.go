@@ -45,7 +45,8 @@ var spawnSubagentCmd = &cobra.Command{
 		}
 
 		logFile := filepath.Join(logDir, time.Now().Format("20060102-150405")+".log")
-		fullPrompt := subagent.BuildPrompt("", prompt, chatID, "subagent", logFile)
+		preamble := "You are a Goated subagent. Read self/AGENTS.md first for instructions on how to operate in this workspace."
+		fullPrompt := subagent.BuildPrompt(preamble, prompt, chatID, "subagent", logFile)
 
 		result, err := runtime.Headless().RunBackground(store, agent.HeadlessRequest{
 			WorkspaceDir: cfg.WorkspaceDir,

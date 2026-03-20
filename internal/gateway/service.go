@@ -223,6 +223,13 @@ func (s *Service) sendBatchWithRetry(ctx context.Context, channel, chatID string
 		if idleErr != nil {
 			fmt.Fprintf(os.Stderr, "[%s] WaitForAwaitingInput: %v (suppressed)\n",
 				time.Now().Format(time.RFC3339), idleErr)
+			recovered, recoverErr := s.tryRecoverAfterIdleTimeout(ctx, requestID, chatID, idleErr)
+			if recoverErr != nil {
+				return responder.SendMessage(ctx, chatID, s.friendlyError(recoverErr))
+			}
+			if recovered {
+				continue
+			}
 			return nil
 		}
 		if !state.SafeIdle() {
@@ -315,8 +322,16 @@ func (s *Service) sendWithRetry(ctx context.Context, msg IncomingMessage, respon
 		if idleErr != nil {
 			fmt.Fprintf(os.Stderr, "[%s] WaitForAwaitingInput: %v (suppressed)\n",
 				time.Now().Format(time.RFC3339), idleErr)
-			// Don't update status — leave as sent_to_agent; if claude is still
-			// working, goat send_user_message will log the response later.
+			recovered, recoverErr := s.tryRecoverAfterIdleTimeout(ctx, requestID, msg.ChatID, idleErr)
+			if recoverErr != nil {
+				return responder.SendMessage(ctx, msg.ChatID, s.friendlyError(recoverErr))
+			}
+			if recovered {
+				continue
+			}
+			// Don't update status — leave as sent_to_agent; if the runtime is
+			// still legitimately working, goat send_user_message will log the
+			// response later.
 			return nil
 		}
 		if !state.SafeIdle() {
@@ -350,6 +365,42 @@ func (s *Service) sendWithRetry(ctx context.Context, msg IncomingMessage, respon
 
 	return responder.SendMessage(ctx, msg.ChatID,
 		s.runtimeDisplayName()+" hit an API error and retries didn't help. Try again in a minute, or use /clear if it persists.")
+}
+
+func (s *Service) tryRecoverAfterIdleTimeout(ctx context.Context, requestID, chatID string, idleErr error) (bool, error) {
+	state, stateErr := s.Session.GetSessionState(ctx)
+	if stateErr == nil {
+		switch state.Kind {
+		case agent.SessionStateBlockedAuth, agent.SessionStateBlockedIntervene:
+			return false, fmt.Errorf("%s requires manual intervention: %s", s.runtimeDisplayName(), state.Summary)
+		case agent.SessionStateAwaitingInput:
+			return false, nil
+		}
+	}
+
+	health, healthErr := s.Session.GetHealth(ctx)
+	if healthErr == nil && !health.OK && !health.Recoverable {
+		return false, fmt.Errorf("%s session requires manual intervention: %s", s.runtimeDisplayName(), health.Summary)
+	}
+
+	detail := idleErr.Error()
+	if stateErr == nil && state.Summary != "" {
+		detail = detail + "; state=" + string(state.Kind) + " (" + state.Summary + ")"
+	}
+	if healthErr == nil && health.Summary != "" {
+		detail = detail + "; health=" + health.Summary
+	}
+	s.logEvent(requestID, msglog.EventData{Name: "idle_timeout_recover", Detail: detail})
+
+	fmt.Fprintf(os.Stderr, "[%s] restarting %s after idle timeout\n",
+		time.Now().Format(time.RFC3339), s.runtimeDisplayName())
+	if err := s.Session.RestartSession(ctx); err != nil {
+		s.logEvent(requestID, msglog.EventData{Name: "idle_timeout_restart_failed", Detail: err.Error()})
+		return false, err
+	}
+
+	s.logEvent(requestID, msglog.EventData{Name: "idle_timeout_restarted"})
+	return true, nil
 }
 
 // logStatus updates the status of a message if the logger is configured.
