@@ -47,6 +47,10 @@ type recoverRuntime struct {
 	restartCalls int
 }
 
+type promptSpyRuntime struct {
+	sendUserPromptCalls int
+}
+
 func (r *recoverRuntime) Descriptor() agent.RuntimeDescriptor {
 	return agent.RuntimeDescriptor{DisplayName: "Claude Code TUI"}
 }
@@ -77,6 +81,47 @@ func (r *recoverRuntime) GetHealth(context.Context) (agent.HealthStatus, error) 
 }
 func (r *recoverRuntime) DetectRetryableError(context.Context) string { return "" }
 func (r *recoverRuntime) Version(context.Context) string              { return "" }
+
+func (r *promptSpyRuntime) Descriptor() agent.RuntimeDescriptor {
+	return agent.RuntimeDescriptor{DisplayName: "Claude Code TUI"}
+}
+func (r *promptSpyRuntime) EnsureSession(context.Context) error  { return nil }
+func (r *promptSpyRuntime) StopSession(context.Context) error    { return nil }
+func (r *promptSpyRuntime) RestartSession(context.Context) error { return nil }
+func (r *promptSpyRuntime) ResetConversation(context.Context, string) (agent.ResetResult, error) {
+	return agent.ResetResult{}, nil
+}
+func (r *promptSpyRuntime) SendUserPrompt(context.Context, string, string, string, *agent.MessageAttachments, string, string) error {
+	r.sendUserPromptCalls++
+	return nil
+}
+func (r *promptSpyRuntime) SendBatchPrompt(context.Context, string, string, []agent.PromptMessage) error {
+	return nil
+}
+func (r *promptSpyRuntime) SendControlCommand(context.Context, string) error { return nil }
+func (r *promptSpyRuntime) GetContextEstimate(context.Context, string) (agent.ContextEstimate, error) {
+	return agent.ContextEstimate{}, nil
+}
+func (r *promptSpyRuntime) GetSessionState(context.Context) (agent.SessionState, error) {
+	return agent.SessionState{}, nil
+}
+func (r *promptSpyRuntime) WaitForAwaitingInput(context.Context, time.Duration) (agent.SessionState, error) {
+	return agent.SessionState{}, nil
+}
+func (r *promptSpyRuntime) GetHealth(context.Context) (agent.HealthStatus, error) {
+	return agent.HealthStatus{OK: true}, nil
+}
+func (r *promptSpyRuntime) DetectRetryableError(context.Context) string { return "" }
+func (r *promptSpyRuntime) Version(context.Context) string              { return "" }
+
+type responderSpy struct {
+	messages []string
+}
+
+func (r *responderSpy) SendMessage(_ context.Context, _ string, text string) error {
+	r.messages = append(r.messages, text)
+	return nil
+}
 
 func newTestService() *Service {
 	return &Service{Session: stubRuntime{}}
@@ -172,5 +217,51 @@ func TestTryRecoverAfterIdleTimeout_RestartsRecoverableSession(t *testing.T) {
 	}
 	if rt.restartCalls != 1 {
 		t.Fatalf("expected exactly one restart, got %d", rt.restartCalls)
+	}
+}
+
+func TestHandleMessage_FailedAttachmentOnlyRepliesToUser(t *testing.T) {
+	rt := &promptSpyRuntime{}
+	resp := &responderSpy{}
+	svc := &Service{Session: rt}
+
+	err := svc.HandleMessage(context.Background(), IncomingMessage{
+		Channel: "telegram",
+		ChatID:  "chat-1",
+		AttachmentsFailed: []AttachmentResult{
+			{
+				Index:      0,
+				Filename:   "report.exe",
+				ReasonCode: "unsupported_type",
+				Reason:     "unsupported file type",
+			},
+		},
+	}, resp)
+	if err != nil {
+		t.Fatalf("HandleMessage returned error: %v", err)
+	}
+	if rt.sendUserPromptCalls != 0 {
+		t.Fatalf("expected no prompt to be sent to runtime, got %d", rt.sendUserPromptCalls)
+	}
+	if len(resp.messages) != 1 {
+		t.Fatalf("expected 1 user-facing message, got %d", len(resp.messages))
+	}
+	want := "I couldn't process that attachment:\n- report.exe: unsupported file type\nSupported uploads include images, PDF, CSV/TSV, DOCX, and XLSX within the configured size limits."
+	if resp.messages[0] != want {
+		t.Fatalf("reply = %q, want %q", resp.messages[0], want)
+	}
+}
+
+func TestFailedAttachmentReply_LimitsListedFailures(t *testing.T) {
+	got := failedAttachmentReply([]AttachmentResult{
+		{Index: 0, Filename: "one.pdf", Reason: "failed one"},
+		{Index: 1, Filename: "two.pdf", Reason: "failed two"},
+		{Index: 2, Filename: "three.pdf", Reason: "failed three"},
+		{Index: 3, Filename: "four.pdf", Reason: "failed four"},
+	})
+
+	want := "I couldn't process those attachments:\n- one.pdf: failed one\n- two.pdf: failed two\n- three.pdf: failed three\n- and 1 more\nSupported uploads include images, PDF, CSV/TSV, DOCX, and XLSX within the configured size limits."
+	if got != want {
+		t.Fatalf("failedAttachmentReply() = %q, want %q", got, want)
 	}
 }

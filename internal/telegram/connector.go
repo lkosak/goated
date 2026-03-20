@@ -239,7 +239,7 @@ func (c *Connector) processUpdate(ctx context.Context, handler gateway.Handler, 
 	}
 
 	attachments, attachmentResults, failed, succeeded := c.processAttachments(ctx, update.Message)
-	if text == "" && len(attachments) == 0 {
+	if text == "" && len(attachments) == 0 && len(failed) == 0 {
 		return nil
 	}
 

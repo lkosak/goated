@@ -80,6 +80,9 @@ func (s *Service) HandleMessage(ctx context.Context, msg IncomingMessage, respon
 	text := strings.TrimSpace(msg.Text)
 	msg.Text = text
 	if text == "" && len(msg.Attachments) == 0 {
+		if len(msg.AttachmentsFailed) > 0 {
+			return responder.SendMessage(ctx, msg.ChatID, failedAttachmentReply(msg.AttachmentsFailed))
+		}
 		return nil
 	}
 
@@ -165,39 +168,38 @@ func (s *Service) HandleBatchMessage(ctx context.Context, msgs []IncomingMessage
 	requestID := msglog.NewRequestID()
 	ctx = msglog.WithRequestID(ctx, requestID)
 
+	channel := msgs[0].Channel
+	chatID := msgs[0].ChatID
+	promptMsgs := make([]agent.PromptMessage, 0, len(msgs))
+
 	// Log each message individually
 	for i := range msgs {
 		msgs[i].Text = strings.TrimSpace(msgs[i].Text)
 		if msgs[i].Text == "" && len(msgs[i].Attachments) == 0 {
+			if len(msgs[i].AttachmentsFailed) > 0 {
+				if err := responder.SendMessage(ctx, msgs[i].ChatID, failedAttachmentReply(msgs[i].AttachmentsFailed)); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		s.logUserMessage(requestID, msgs[i], msglog.StatusPending)
-	}
 
-	// Check session health before sending
-	if err := s.ensureHealthySession(ctx, responder); err != nil {
-		chatID := msgs[0].ChatID
-		return responder.SendMessage(ctx, chatID, s.friendlyError(err))
-	}
-
-	// Build batch prompt messages
-	channel := msgs[0].Channel
-	chatID := msgs[0].ChatID
-	promptMsgs := make([]agent.PromptMessage, 0, len(msgs))
-	for _, m := range msgs {
-		if m.Text == "" && len(m.Attachments) == 0 {
-			continue
-		}
 		promptMsgs = append(promptMsgs, agent.PromptMessage{
-			Text:        m.Text,
-			Attachments: msgAttachments(m),
-			MessageID:   m.MessageID,
-			ThreadID:    m.ThreadID,
+			Text:        msgs[i].Text,
+			Attachments: msgAttachments(msgs[i]),
+			MessageID:   msgs[i].MessageID,
+			ThreadID:    msgs[i].ThreadID,
 		})
 	}
 
 	if len(promptMsgs) == 0 {
 		return nil
+	}
+
+	// Check session health before sending
+	if err := s.ensureHealthySession(ctx, responder); err != nil {
+		return responder.SendMessage(ctx, chatID, s.friendlyError(err))
 	}
 
 	fmt.Fprintf(os.Stderr, "[%s] sending batch of %d messages\n",
@@ -645,4 +647,39 @@ func (s *Service) friendlyError(err error) string {
 	default:
 		return "Something went wrong talking to " + name + ": " + err.Error()
 	}
+}
+
+func failedAttachmentReply(failed []AttachmentResult) string {
+	if len(failed) == 0 {
+		return "I couldn't process that attachment."
+	}
+
+	var lines []string
+	if len(failed) == 1 {
+		lines = append(lines, "I couldn't process that attachment:")
+	} else {
+		lines = append(lines, "I couldn't process those attachments:")
+	}
+
+	limit := len(failed)
+	if limit > 3 {
+		limit = 3
+	}
+	for _, item := range failed[:limit] {
+		name := strings.TrimSpace(item.Filename)
+		if name == "" {
+			name = fmt.Sprintf("attachment %d", item.Index+1)
+		}
+		reason := strings.TrimSpace(item.Reason)
+		if reason == "" {
+			reason = "upload failed validation"
+		}
+		lines = append(lines, fmt.Sprintf("- %s: %s", name, reason))
+	}
+	if len(failed) > limit {
+		lines = append(lines, fmt.Sprintf("- and %d more", len(failed)-limit))
+	}
+
+	lines = append(lines, "Supported uploads include images, PDF, CSV/TSV, DOCX, and XLSX within the configured size limits.")
+	return strings.Join(lines, "\n")
 }
