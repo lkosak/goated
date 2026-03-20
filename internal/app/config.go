@@ -72,6 +72,8 @@ type Config struct {
 }
 
 func LoadConfig() Config {
+	ensureLocalBinPaths()
+
 	v := viper.New()
 	v.SetConfigName("goated")
 	v.SetConfigType("json")
@@ -218,6 +220,55 @@ func LoadConfig() Config {
 		DefaultTimezone:              v.GetString("default_timezone"),
 		AdminChatID:                  loadCred(credsDir, "GOAT_ADMIN_CHAT_ID"),
 	}
+}
+
+func ensureLocalBinPaths() {
+	const pathKey = "PATH"
+
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return
+	}
+
+	candidates := []string{
+		filepath.Join(home, ".npm-global", "bin"),
+		filepath.Join(home, ".local", "bin"),
+		filepath.Join(home, ".local", "goated-go", "bin"),
+	}
+
+	current := filepath.SplitList(os.Getenv(pathKey))
+	seen := make(map[string]struct{}, len(current))
+	var cleaned []string
+	for _, dir := range current {
+		if dir == "" {
+			continue
+		}
+		if _, ok := seen[dir]; ok {
+			continue
+		}
+		seen[dir] = struct{}{}
+		cleaned = append(cleaned, dir)
+	}
+
+	var additions []string
+	for _, dir := range candidates {
+		info, err := os.Stat(dir)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		if _, ok := seen[dir]; ok {
+			continue
+		}
+		seen[dir] = struct{}{}
+		additions = append(additions, dir)
+	}
+
+	if len(additions) == 0 {
+		return
+	}
+
+	parts := append(additions, cleaned...)
+	_ = os.Setenv(pathKey, strings.Join(parts, string(os.PathListSeparator)))
 }
 
 // loadCred reads a secret from workspace/creds/KEY.txt, falling back to the

@@ -81,17 +81,10 @@ var daemonRunCmd = &cobra.Command{
 				return fmt.Errorf("resolve executable: %w", err)
 			}
 			logPath := filepath.Join(cfg.LogDir, "goated_daemon.log")
-			shell := fmt.Sprintf(
-				`_GOATED_DAEMON=1 nohup %q daemon run >> %q 2>&1 & echo $!`,
-				exe, logPath,
-			)
-			cmd := exec.Command("sh", "-c", shell)
-			cmd.Env = os.Environ()
-			out, err := cmd.Output()
+			pid, err := startDetachedDaemon(exe, logPath)
 			if err != nil {
 				return fmt.Errorf("start daemon: %w", err)
 			}
-			pid := stripNL(string(out))
 			fmt.Printf("goated daemon started (pid=%s, log=%s)\n", pid, logPath)
 			return nil
 		}
@@ -409,8 +402,10 @@ var daemonRestartCmd = &cobra.Command{
 		// command itself gets killed (e.g. agent process interrupted).
 		// "daemon run" is safe to call redundantly — it exits if one is already running.
 		guardianCmd := exec.Command("sh", "-c",
-			fmt.Sprintf("sleep 15 && %s daemon run >> %s 2>&1 || true",
-				goatedBin, filepath.Join(cfg.LogDir, "goated_daemon.log")))
+			fmt.Sprintf(
+				"sleep 15 && if [ -f %q ] && pid=$(cat %q 2>/dev/null) && [ -n \"$pid\" ] && kill -0 \"$pid\" 2>/dev/null; then exit 0; fi; %s daemon run >> %s 2>&1 || true",
+				pidPath, pidPath, goatedBin, filepath.Join(cfg.LogDir, "goated_daemon.log"),
+			))
 		guardianCmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 		if err := guardianCmd.Start(); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to start restart guardian: %v\n", err)
@@ -428,12 +423,13 @@ var daemonRestartCmd = &cobra.Command{
 			fmt.Println("No running daemon found.")
 		}
 
-		out, err := exec.Command(goatedBin, "daemon", "run").Output()
+		logPath := filepath.Join(cfg.LogDir, "goated_daemon.log")
+		pid, err := startDetachedDaemon(goatedBin, logPath)
 		if err != nil {
 			return fmt.Errorf("start daemon: %w", err)
 		}
-		rec.NewPID = stripNL(string(out))
-		fmt.Print(string(out))
+		rec.NewPID = fmt.Sprintf("goated daemon started (pid=%s, log=%s)", pid, logPath)
+		fmt.Printf("%s\n", rec.NewPID)
 
 		// Append restart record
 		if err := appendRestartRecord(restartLog, rec); err != nil {
@@ -633,6 +629,28 @@ func appendRestartRecord(path string, rec restartRecord) error {
 	}
 	defer f.Close()
 	return json.NewEncoder(f).Encode(rec)
+}
+
+func startDetachedDaemon(exePath, logPath string) (string, error) {
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		return "", fmt.Errorf("mkdir log dir: %w", err)
+	}
+
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return "", fmt.Errorf("open log file: %w", err)
+	}
+	defer logFile.Close()
+
+	cmd := exec.Command(exePath, "daemon", "run")
+	cmd.Env = append(os.Environ(), "_GOATED_DAEMON=1")
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
+		return "", err
+	}
+	return strconv.Itoa(cmd.Process.Pid), nil
 }
 
 func splitLines(s string) []string {

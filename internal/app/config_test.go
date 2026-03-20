@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -108,6 +109,95 @@ func TestLoadConfigResolvesRelativePathsFromConfigFile(t *testing.T) {
 	}
 	if cfg.SlackAttachmentsRoot != filepath.Join(root, "workspace", "tmp", "slack", "attachments") {
 		t.Fatalf("SlackAttachmentsRoot = %q, want %q", cfg.SlackAttachmentsRoot, filepath.Join(root, "workspace", "tmp", "slack", "attachments"))
+	}
+}
+
+func TestEnsureLocalBinPathsPrependsExistingDirs(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	npmBin := filepath.Join(home, ".npm-global", "bin")
+	localBin := filepath.Join(home, ".local", "bin")
+	goBin := filepath.Join(home, ".local", "goated-go", "bin")
+	for _, dir := range []string{npmBin, localBin, goBin} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+
+	oldHome, hadHome := os.LookupEnv("HOME")
+	oldPath, hadPath := os.LookupEnv("PATH")
+	t.Cleanup(func() {
+		if hadHome {
+			_ = os.Setenv("HOME", oldHome)
+		} else {
+			_ = os.Unsetenv("HOME")
+		}
+		if hadPath {
+			_ = os.Setenv("PATH", oldPath)
+		} else {
+			_ = os.Unsetenv("PATH")
+		}
+	})
+
+	if err := os.Setenv("HOME", home); err != nil {
+		t.Fatalf("set HOME: %v", err)
+	}
+	if err := os.Setenv("PATH", strings.Join([]string{"/usr/bin", npmBin}, string(os.PathListSeparator))); err != nil {
+		t.Fatalf("set PATH: %v", err)
+	}
+
+	ensureLocalBinPaths()
+
+	got := filepath.SplitList(os.Getenv("PATH"))
+	wantPrefix := []string{localBin, goBin, "/usr/bin", npmBin}
+	if len(got) < len(wantPrefix) {
+		t.Fatalf("PATH entries = %v, want prefix %v", got, wantPrefix)
+	}
+	for i, want := range wantPrefix {
+		if got[i] != want {
+			t.Fatalf("PATH[%d] = %q, want %q (full PATH=%v)", i, got[i], want, got)
+		}
+	}
+}
+
+func TestEnsureLocalBinPathsIsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	npmBin := filepath.Join(home, ".npm-global", "bin")
+	if err := os.MkdirAll(npmBin, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", npmBin, err)
+	}
+
+	oldHome, hadHome := os.LookupEnv("HOME")
+	oldPath, hadPath := os.LookupEnv("PATH")
+	t.Cleanup(func() {
+		if hadHome {
+			_ = os.Setenv("HOME", oldHome)
+		} else {
+			_ = os.Unsetenv("HOME")
+		}
+		if hadPath {
+			_ = os.Setenv("PATH", oldPath)
+		} else {
+			_ = os.Unsetenv("PATH")
+		}
+	})
+
+	if err := os.Setenv("HOME", home); err != nil {
+		t.Fatalf("set HOME: %v", err)
+	}
+	if err := os.Setenv("PATH", npmBin); err != nil {
+		t.Fatalf("set PATH: %v", err)
+	}
+
+	ensureLocalBinPaths()
+	first := os.Getenv("PATH")
+	ensureLocalBinPaths()
+	second := os.Getenv("PATH")
+	if second != first {
+		t.Fatalf("ensureLocalBinPaths() changed PATH on second run: first=%q second=%q", first, second)
 	}
 }
 
