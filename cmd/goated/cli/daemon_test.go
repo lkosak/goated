@@ -81,12 +81,18 @@ func TestMaybeMirrorSystemNotice_ForwardsMessageMetadata(t *testing.T) {
 	}
 }
 
-func TestMaybeMirrorSystemNotice_SkipsWhenSourceMissing(t *testing.T) {
+func TestMaybeMirrorSystemNotice_DefaultsMirrorSourceWhenSourceMissing(t *testing.T) {
 	session := &noticeSpySession{}
 	if err := maybeMirrorSystemNotice(context.Background(), session, "telegram", daemonSendRequest{ChatID: "chat-1", Text: "hello"}); err != nil {
 		t.Fatalf("maybeMirrorSystemNotice() error = %v", err)
 	}
-	if session.calls != 0 {
-		t.Fatalf("calls = %d, want 0", session.calls)
+	if session.calls != 1 {
+		t.Fatalf("calls = %d, want 1", session.calls)
+	}
+	if session.source != "assistant_reply" {
+		t.Fatalf("source = %q, want assistant_reply", session.source)
+	}
+	if got := session.metadata["mirror"]; got != "true" {
+		t.Fatalf("mirror = %q, want true", got)
 	}
 }

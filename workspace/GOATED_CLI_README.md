@@ -4,7 +4,7 @@
 
 ## Sending messages to the user
 
-Use `send_user_message` to respond to the user via Telegram:
+Use `send_user_message` to respond to the user through the active gateway:
 
 ```sh
 echo "Your markdown message" | ./goat send_user_message --chat <chat_id>
@@ -63,6 +63,29 @@ Use `send_user_file` to send a local file or screenshot back to the user:
 - Set secret: `./goat creds set GITHUB_API_KEY ghp_xxx`
 - Read secret: `./goat creds get GITHUB_API_KEY`
 - List secrets: `./goat creds list`
+
+## Slack history
+
+Use `./goat slack history` when you need to inspect prior Slack messages without dropping to raw `curl`.
+
+```sh
+./goat slack history
+./goat slack history --limit 50 --reverse
+./goat slack history --latest 1774060301.552199 --limit 10
+./goat slack history --oldest 1774060301.552199 --inclusive --limit 20
+./goat slack history --cursor dXNlcjpVMEc5V0ZYTlo=
+./goat slack history --json | jq '.messages[].text'
+```
+
+Notes:
+
+- `--chat <id>` overrides the configured Slack DM/channel ID. If omitted, the command uses `GOAT_SLACK_CHANNEL_ID`.
+- `--latest` and `--oldest` accept raw Slack timestamps like `1774060301.552199`.
+- `--reverse` prints messages oldest-first, which is useful for playback/reconstruction.
+- Use `--limit`, `--latest`, and `--oldest` together to replay a bounded window of older messages around a known event.
+- Use `--cursor` to keep paging backward when Slack returns `response_metadata.next_cursor`.
+- `--json` returns the raw Slack API payload, including `response_metadata.next_cursor` for pagination.
+- This command requires `GOAT_SLACK_BOT_TOKEN`.
 
 ## Cron management
 
