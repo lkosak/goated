@@ -47,6 +47,10 @@ type recoverRuntime struct {
 	restartCalls int
 }
 
+type deadRecoverRuntime struct {
+	restartCalls int
+}
+
 type promptSpyRuntime struct {
 	sendUserPromptCalls int
 }
@@ -81,6 +85,37 @@ func (r *recoverRuntime) GetHealth(context.Context) (agent.HealthStatus, error) 
 }
 func (r *recoverRuntime) DetectRetryableError(context.Context) string { return "" }
 func (r *recoverRuntime) Version(context.Context) string              { return "" }
+
+func (r *deadRecoverRuntime) Descriptor() agent.RuntimeDescriptor {
+	return agent.RuntimeDescriptor{DisplayName: "Claude Code TUI"}
+}
+func (r *deadRecoverRuntime) EnsureSession(context.Context) error  { return nil }
+func (r *deadRecoverRuntime) StopSession(context.Context) error    { return nil }
+func (r *deadRecoverRuntime) RestartSession(context.Context) error { r.restartCalls++; return nil }
+func (r *deadRecoverRuntime) ResetConversation(context.Context, string) (agent.ResetResult, error) {
+	return agent.ResetResult{}, nil
+}
+func (r *deadRecoverRuntime) SendUserPrompt(context.Context, string, string, string, *agent.MessageAttachments, string, string) error {
+	return nil
+}
+func (r *deadRecoverRuntime) SendBatchPrompt(context.Context, string, string, []agent.PromptMessage) error {
+	return nil
+}
+func (r *deadRecoverRuntime) SendControlCommand(context.Context, string) error { return nil }
+func (r *deadRecoverRuntime) GetContextEstimate(context.Context, string) (agent.ContextEstimate, error) {
+	return agent.ContextEstimate{}, nil
+}
+func (r *deadRecoverRuntime) GetSessionState(context.Context) (agent.SessionState, error) {
+	return agent.SessionState{Kind: agent.SessionStateDead, Summary: "no tmux session"}, nil
+}
+func (r *deadRecoverRuntime) WaitForAwaitingInput(context.Context, time.Duration) (agent.SessionState, error) {
+	return agent.SessionState{}, errors.New("timed out waiting for Claude session to become idle")
+}
+func (r *deadRecoverRuntime) GetHealth(context.Context) (agent.HealthStatus, error) {
+	return agent.HealthStatus{OK: false, Recoverable: true, Summary: "tmux session missing"}, nil
+}
+func (r *deadRecoverRuntime) DetectRetryableError(context.Context) string { return "" }
+func (r *deadRecoverRuntime) Version(context.Context) string              { return "" }
 
 func (r *promptSpyRuntime) Descriptor() agent.RuntimeDescriptor {
 	return agent.RuntimeDescriptor{DisplayName: "Claude Code TUI"}
@@ -204,7 +239,7 @@ func TestFriendlyError_WrappedCanceled(t *testing.T) {
 	}
 }
 
-func TestTryRecoverAfterIdleTimeout_RestartsRecoverableSession(t *testing.T) {
+func TestTryRecoverAfterIdleTimeout_DoesNotRestartHealthyStableSession(t *testing.T) {
 	rt := &recoverRuntime{}
 	svc := &Service{Session: rt}
 
@@ -212,8 +247,24 @@ func TestTryRecoverAfterIdleTimeout_RestartsRecoverableSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tryRecoverAfterIdleTimeout returned error: %v", err)
 	}
+	if recovered {
+		t.Fatal("expected healthy stable session to avoid restart")
+	}
+	if rt.restartCalls != 0 {
+		t.Fatalf("expected no restart, got %d", rt.restartCalls)
+	}
+}
+
+func TestTryRecoverAfterIdleTimeout_RestartsDeadRecoverableSession(t *testing.T) {
+	rt := &deadRecoverRuntime{}
+	svc := &Service{Session: rt}
+
+	recovered, err := svc.tryRecoverAfterIdleTimeout(context.Background(), "", "chat-1", errors.New("timed out waiting for Claude session to become idle"))
+	if err != nil {
+		t.Fatalf("tryRecoverAfterIdleTimeout returned error: %v", err)
+	}
 	if !recovered {
-		t.Fatal("expected stalled session recovery to restart the runtime")
+		t.Fatal("expected dead recoverable session to restart")
 	}
 	if rt.restartCalls != 1 {
 		t.Fatalf("expected exactly one restart, got %d", rt.restartCalls)

@@ -377,12 +377,29 @@ func (s *Service) tryRecoverAfterIdleTimeout(ctx context.Context, requestID, cha
 			return false, fmt.Errorf("%s requires manual intervention: %s", s.runtimeDisplayName(), state.Summary)
 		case agent.SessionStateAwaitingInput:
 			return false, nil
+		case agent.SessionStateGenerating, agent.SessionStateUnknownStable:
+			s.logEvent(requestID, msglog.EventData{
+				Name:   "idle_timeout_ignored",
+				Detail: fmt.Sprintf("state=%s (%s)", state.Kind, state.Summary),
+			})
+			return false, nil
 		}
 	}
 
 	health, healthErr := s.Session.GetHealth(ctx)
 	if healthErr == nil && !health.OK && !health.Recoverable {
 		return false, fmt.Errorf("%s session requires manual intervention: %s", s.runtimeDisplayName(), health.Summary)
+	}
+	if healthErr == nil && health.OK {
+		detail := idleErr.Error()
+		if stateErr == nil && state.Summary != "" {
+			detail = detail + "; state=" + string(state.Kind) + " (" + state.Summary + ")"
+		}
+		if health.Summary != "" {
+			detail = detail + "; health=" + health.Summary
+		}
+		s.logEvent(requestID, msglog.EventData{Name: "idle_timeout_ignored", Detail: detail})
+		return false, nil
 	}
 
 	detail := idleErr.Error()
