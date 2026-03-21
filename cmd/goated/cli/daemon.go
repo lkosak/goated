@@ -426,7 +426,7 @@ func (n cronNoticeNotifier) SendMessage(ctx context.Context, chatID, text string
 }
 
 func maybeMirrorSystemNotice(ctx context.Context, session agent.SessionRuntime, channel string, req daemonSendRequest) error {
-	if req.Source == "" || session == nil {
+	if session == nil {
 		return nil
 	}
 	sender, ok := session.(agent.SystemNoticeSender)
@@ -441,8 +441,13 @@ func maybeMirrorSystemNotice(ctx context.Context, session agent.SessionRuntime, 
 			message = fmt.Sprintf("[media:%s] %s", withDefault(req.MediaType, "auto"), req.FilePath)
 		}
 	}
+	noticeSource := req.Source
+	if noticeSource == "" {
+		noticeSource = "assistant_reply"
+	}
 	metadata := map[string]string{
-		"source": req.Source,
+		"source": noticeSource,
+		"mirror": "true",
 	}
 	if req.LogPath != "" {
 		metadata["log_path"] = req.LogPath
@@ -451,7 +456,7 @@ func maybeMirrorSystemNotice(ctx context.Context, session agent.SessionRuntime, 
 		metadata["file_path"] = req.FilePath
 		metadata["media_type"] = withDefault(req.MediaType, "auto")
 	}
-	return sender.SendSystemNotice(ctx, channel, req.ChatID, req.Source, message, metadata)
+	return sender.SendSystemNotice(ctx, channel, req.ChatID, noticeSource, message, metadata)
 }
 
 func ensureSelfRepo(workspaceDir string) error {
