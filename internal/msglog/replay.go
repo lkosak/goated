@@ -19,6 +19,25 @@ type StuckMessage struct {
 	Entry     LogEntry
 }
 
+// FilterRecentStuckMessages keeps only stuck messages newer than maxAge.
+// Older entries are returned separately so callers can log or inspect them.
+func FilterRecentStuckMessages(stuck []StuckMessage, now time.Time, maxAge time.Duration) (recent []StuckMessage, stale []StuckMessage) {
+	if maxAge <= 0 {
+		return stuck, nil
+	}
+
+	for _, sm := range stuck {
+		age := now.Sub(time.Unix(sm.Entry.TSUnix, 0))
+		if age > maxAge {
+			stale = append(stale, sm)
+			continue
+		}
+		recent = append(recent, sm)
+	}
+
+	return recent, stale
+}
+
 // FindStuckMessages scans today's (and yesterday's) daily logs for messages
 // stuck in sent_to_agent status.
 func FindStuckMessages(logger *Logger) ([]StuckMessage, error) {

@@ -45,7 +45,9 @@ Use the daemon management command — it waits for in-flight messages to flush:
 ## Verifying changes compile
 
 ```bash
+gofmt -w .              # format Go files before committing
 go build ./...          # quick compile check
+go vet ./...            # static analysis check before committing
 ./build.sh              # full build
 ```
 

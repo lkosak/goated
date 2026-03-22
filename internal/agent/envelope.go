@@ -21,16 +21,16 @@ func BuildPromptEnvelope(channel, chatID, userPrompt string, attachments *Messag
 	}
 
 	kvs := []pydict.KV{
-		{"message", strings.TrimSpace(userPrompt)},
-		{"source", channel},
-		{"chat_id", chatID},
+		{Key: "message", Value: strings.TrimSpace(userPrompt)},
+		{Key: "source", Value: channel},
+		{Key: "chat_id", Value: chatID},
 	}
 
 	if messageID != "" {
-		kvs = append(kvs, pydict.KV{"message_id", messageID})
+		kvs = append(kvs, pydict.KV{Key: "message_id", Value: messageID})
 	}
 	if threadID != "" {
-		kvs = append(kvs, pydict.KV{"thread_id", threadID})
+		kvs = append(kvs, pydict.KV{Key: "thread_id", Value: threadID})
 	}
 
 	if attachments != nil {
@@ -38,15 +38,15 @@ func BuildPromptEnvelope(channel, chatID, userPrompt string, attachments *Messag
 		for _, p := range attachments.Paths {
 			paths = append(paths, p)
 		}
-		kvs = append(kvs, pydict.KV{"attachments", paths})
-		kvs = append(kvs, pydict.KV{"attachments_failed", attachmentInfosToMaps(attachments.Failed)})
-		kvs = append(kvs, pydict.KV{"attachments_succeeded", attachmentInfosToMaps(attachments.Succeeded)})
+		kvs = append(kvs, pydict.KV{Key: "attachments", Value: paths})
+		kvs = append(kvs, pydict.KV{Key: "attachments_failed", Value: attachmentInfosToMaps(attachments.Failed)})
+		kvs = append(kvs, pydict.KV{Key: "attachments_succeeded", Value: attachmentInfosToMaps(attachments.Succeeded)})
 	}
 
 	kvs = append(kvs,
-		pydict.KV{"respond_with", fmt.Sprintf("./goat send_user_message --chat %s", chatID)},
-		pydict.KV{"formatting", formattingDoc},
-		pydict.KV{"instruction", "Send a plan message first if the task will take longer than 30s."},
+		pydict.KV{Key: "respond_with", Value: fmt.Sprintf("./goat send_user_message --chat %s", chatID)},
+		pydict.KV{Key: "formatting", Value: formattingDoc},
+		pydict.KV{Key: "instruction", Value: "Send a plan message first if the task will take longer than 30s."},
 	)
 
 	return pydict.EncodeOrdered(kvs)
@@ -97,12 +97,12 @@ func BuildBatchEnvelope(channel, chatID string, messages []PromptMessage) string
 	}
 
 	kvs := []pydict.KV{
-		{"messages", msgItems},
-		{"source", channel},
-		{"chat_id", chatID},
-		{"respond_with", fmt.Sprintf("./goat send_user_message --chat %s", chatID)},
-		{"formatting", formattingDoc},
-		{"instruction", "Send a plan message first if the task will take longer than 30s."},
+		{Key: "messages", Value: msgItems},
+		{Key: "source", Value: channel},
+		{Key: "chat_id", Value: chatID},
+		{Key: "respond_with", Value: fmt.Sprintf("./goat send_user_message --chat %s", chatID)},
+		{Key: "formatting", Value: formattingDoc},
+		{Key: "instruction", Value: "Send a plan message first if the task will take longer than 30s."},
 	}
 
 	return pydict.EncodeOrdered(kvs)
@@ -126,15 +126,15 @@ func BuildSystemNoticeEnvelope(channel, chatID, source, message string, metadata
 	}
 
 	kvs := []pydict.KV{
-		{"kind", "system_notice"},
-		{"source", channel},
-		{"chat_id", chatID},
-		{"notice_source", strings.TrimSpace(source)},
-		{"message", strings.TrimSpace(message)},
-		{"instruction", "Informational system message for context only. No response is needed unless the user explicitly asks about it."},
+		{Key: "kind", Value: "system_notice"},
+		{Key: "source", Value: channel},
+		{Key: "chat_id", Value: chatID},
+		{Key: "notice_source", Value: strings.TrimSpace(source)},
+		{Key: "message", Value: strings.TrimSpace(message)},
+		{Key: "instruction", Value: "Informational system message for context only. No response is needed unless the user explicitly asks about it."},
 	}
 	if len(metaItems) > 0 {
-		kvs = append(kvs, pydict.KV{"metadata", metaItems})
+		kvs = append(kvs, pydict.KV{Key: "metadata", Value: metaItems})
 	}
 	return pydict.EncodeOrdered(kvs)
 }

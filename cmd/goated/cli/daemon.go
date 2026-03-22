@@ -34,6 +34,8 @@ type restartRecord struct {
 	Reason    string `json:"reason"`
 }
 
+const maxReplayAge = 1 * time.Hour
+
 var daemonCmd = &cobra.Command{
 	Use:   "daemon",
 	Short: "Manage the goated daemon",
@@ -141,11 +143,21 @@ var daemonRunCmd = &cobra.Command{
 				if err != nil || len(stuck) == 0 {
 					return
 				}
-				fmt.Fprintf(os.Stderr, "[%s] found %d stuck message(s), replaying...\n",
-					time.Now().Format(time.RFC3339), len(stuck))
+				now := time.Now()
+				recent, stale := msglog.FilterRecentStuckMessages(stuck, now, maxReplayAge)
+				for _, sm := range stale {
+					age := now.Sub(time.Unix(sm.Entry.TSUnix, 0)).Round(time.Second)
+					fmt.Fprintf(os.Stderr, "[%s] skipping stale stuck message %s (age=%s)\n",
+						time.Now().Format(time.RFC3339), sm.RequestID, age)
+				}
+				if len(recent) == 0 {
+					return
+				}
+				fmt.Fprintf(os.Stderr, "[%s] found %d recent stuck message(s) <= %s, replaying...\n",
+					time.Now().Format(time.RFC3339), len(recent), maxReplayAge)
 				replayCtx, replayCancel := context.WithTimeout(context.Background(), 10*time.Minute)
 				defer replayCancel()
-				msglog.ReplayStuckMessages(replayCtx, msgLogger, runtime.Session(), stuck)
+				msglog.ReplayStuckMessages(replayCtx, msgLogger, runtime.Session(), recent)
 			}()
 		}
 
