@@ -7,6 +7,9 @@ kind: cron_prompt
 
 Review recent material in this self repo and extract only durable knowledge.
 
+Before updating `VAULT/`, read `../guides/vault-interlinking.md` for the
+current note-linking and vault-organization conventions.
+
 Sources to inspect:
 - recent mission logs in `MISSIONS/`
 - recent daily notes in `VAULT/daily/`
