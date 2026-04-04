@@ -38,15 +38,15 @@ func (h *HeadlessRuntime) RunSync(ctx context.Context, store *db.Store, req agen
 	cmd.Stdin = strings.NewReader(req.Prompt)
 
 	result, err := subagent.RunSyncCommand(ctx, store, cmd, subagent.RunOpts{
-		WorkspaceDir: cmd.Dir,
-		Prompt:       req.Prompt,
-		LogPath:      req.LogPath,
-		Source:       req.Source,
-		CronID:       req.CronID,
-		ChatID:       req.ChatID,
-		Silent:       req.Silent,
-		LogCaller:    req.LogCaller,
-		SessionName:  sessionname.Codex(workspaceDir),
+		WorkspaceDir:      cmd.Dir,
+		Prompt:            req.Prompt,
+		LogPath:           req.LogPath,
+		Source:            req.Source,
+		CronID:            req.CronID,
+		ChatID:            req.ChatID,
+		NotifyMainSession: req.NotifyMainSession,
+		LogCaller:         req.LogCaller,
+		SessionName:       sessionname.Codex(workspaceDir),
 		Runtime: db.ExecutionRuntime{
 			Provider: "codex",
 			Mode:     "headless_exec",
@@ -77,15 +77,15 @@ func (h *HeadlessRuntime) RunBackground(store *db.Store, req agent.HeadlessReque
 	cmd.Stdin = strings.NewReader(req.Prompt)
 
 	result, err := subagent.RunBackgroundCommand(store, cmd, subagent.RunOpts{
-		WorkspaceDir: cmd.Dir,
-		Prompt:       req.Prompt,
-		LogPath:      req.LogPath,
-		Source:       req.Source,
-		CronID:       req.CronID,
-		ChatID:       req.ChatID,
-		Silent:       req.Silent,
-		LogCaller:    req.LogCaller,
-		SessionName:  sessionname.Codex(workspaceDir),
+		WorkspaceDir:      cmd.Dir,
+		Prompt:            req.Prompt,
+		LogPath:           req.LogPath,
+		Source:            req.Source,
+		CronID:            req.CronID,
+		ChatID:            req.ChatID,
+		NotifyMainSession: req.NotifyMainSession,
+		LogCaller:         req.LogCaller,
+		SessionName:       sessionname.Codex(workspaceDir),
 		Runtime: db.ExecutionRuntime{
 			Provider: "codex",
 			Mode:     "headless_exec",
