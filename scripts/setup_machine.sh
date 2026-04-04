@@ -18,13 +18,15 @@ usage() {
   cat <<EOF
 Usage:
   scripts/setup_machine.sh doctor
+  scripts/setup_machine.sh can-install-system
   scripts/setup_machine.sh install-system
   scripts/setup_machine.sh install-go
 
 Commands:
-  doctor          Check required tools for building and running Goated.
-  install-system  Install core Ubuntu/Debian packages used by this repo.
-  install-go      Install Go ${GO_VERSION} from the official tarball to ${LOCAL_GO_ROOT}.
+  doctor              Check required tools for building and running Goated.
+  can-install-system  Exit 0 when install-system is supported on this machine.
+  install-system      Install core Ubuntu/Debian packages used by this repo.
+  install-go          Install Go ${GO_VERSION} from the official tarball to ${LOCAL_GO_ROOT}.
 
 Notes:
   - Runtime CLIs are validated but not auto-installed here.
@@ -198,15 +200,18 @@ doctor() {
   fi
 }
 
-install_system() {
+can_install_system() {
   if [[ ! -r /etc/os-release ]]; then
-    echo "Unsupported system: /etc/os-release not found" >&2
-    exit 1
+    return 1
   fi
 
   # shellcheck disable=SC1091
   source /etc/os-release
-  if [[ "${ID:-}" != "ubuntu" && "${ID_LIKE:-}" != *"debian"* ]]; then
+  [[ "${ID:-}" == "ubuntu" || "${ID_LIKE:-}" == *"debian"* ]]
+}
+
+install_system() {
+  if ! can_install_system; then
     echo "install-system currently supports Ubuntu/Debian only." >&2
     exit 1
   fi
@@ -216,6 +221,7 @@ install_system() {
     bash \
     build-essential \
     ca-certificates \
+    cron \
     curl \
     git \
     tar \
@@ -288,6 +294,9 @@ main() {
   case "$cmd" in
     doctor)
       doctor
+      ;;
+    can-install-system)
+      can_install_system
       ;;
     install-system)
       install_system
