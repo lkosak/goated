@@ -6,6 +6,8 @@
 
 Goated is an always-on personal AI assistant, built around Claude Code and Codex. It's minimal, performant, and piggybacks on the best harnesses in the world for long-running sessions.
 
+**Why Goated?** Most agent frameworks own the context window — they inject bootstrap files, manage session history, and accumulate state in-process until memory explodes. Goated doesn't touch the context window at all. It's a ~20 MB daemon that pastes message envelopes into tmux and lets Claude Code handle its own context compaction, memory, and token budgeting. The result: no token bloat, no session file growth, no multi-GB memory leaks. Just a thin orchestrator that stays out of the way. See [docs/PERFORMANCE.md](docs/PERFORMANCE.md) for the full comparison.
+
 Out of the box, Goated supports:
 
 - Slack and Telegram chat interfaces
@@ -23,7 +25,7 @@ Out of the box, Goated supports:
 1. Clone the repo:
 
 ```sh
-git clone https://github.com/dorkitude/goated.git
+git clone https://github.com/endgame-labs/goated.git
 cd goated
 ```
 
@@ -246,7 +248,7 @@ for day-to-day use, including `tmux` and `cron`/`crontab`.
 ### Install
 
 ```sh
-git clone https://github.com/dorkitude/goated.git
+git clone https://github.com/endgame-labs/goated.git
 cd goated
 bash build.sh
 ```
