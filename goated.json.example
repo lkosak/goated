@@ -1,19 +1,13 @@
 {
-  "gateway": "telegram",
-  "agent_runtime": "claude",
+  "agent_runtime": "claude_tui",
+  "db_path": "/path/to/goated/goated.db",
+  "debug": false,
   "default_timezone": "America/Los_Angeles",
-  "workspace_dir": "workspace",
-  "db_path": "",
-  "log_dir": "",
-  "telegram": {
-    "mode": "polling",
-    "webhook_addr": ":8080",
-    "webhook_path": "/telegram/webhook"
-  },
+  "gateway": "slack",
+  "log_dir": "/path/to/goated/logs",
+  "model": "opus",
   "slack": {
-    "attachments_root": "",
-    "attachment_max_bytes": 26214400,
-    "attachment_max_total_bytes": 263192576,
-    "attachment_max_parallel": 3
-  }
+    "channel_id": "YOUR_SLACK_CHANNEL_ID"
+  },
+  "workspace_dir": "/path/to/goated/workspace"
 }

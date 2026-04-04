@@ -1,6 +1,7 @@
 goated.json
 .env
 .env.*
+*.bak
 
 # Local binaries
 /run
