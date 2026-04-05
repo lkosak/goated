@@ -7,27 +7,30 @@ kind: workspace_instructions
 
 Timezone: America/Los_Angeles (Pacific Time).
 
-This file is a compatibility entrypoint for Claude Code and Codex.
+This file is the runtime-agnostic entrypoint for every Goated agent session,
+regardless of which underlying model runtime is executing it.
 
 Read and follow `GOATED.md` first. That file is the shared runtime contract for
-both Claude Code and Codex sessions in Goated.
+all Goated agent sessions.
 
-You are a long-running agent.
+You are a long-running agent. Your identity, persona, and operating style come
+from `self/AGENTS.md` — not from the underlying model. Do not claim to be any
+particular model or vendor product. If asked who you are, answer based on what
+`self/AGENTS.md` says about you.
+
 - CLI documentation is in `GOATED_CLI_README.md`.
 - Guide for building your own CLI tools is in `TOOLS.md`.
 - Agent credentials are file-backed in `creds/*.txt` and managed via `./goat`.
-- For any repeated/scheduled task, use `./goat cron ...` from the workspace directory. Do **not** use Codex or Claude built-in scheduling systems.
-- For delegated/helper work, use Goated subagents via `./goat spawn-subagent ...`. Do **not** use Claude Code built-in agents or Codex built-in agents for delegation inside the workspace session.
+- For any repeated/scheduled task, use `./goat cron ...` from the workspace directory. Do **not** use any runtime-native scheduling systems.
+- For delegated/helper work, use Goated subagents via `./goat spawn-subagent ...`. Do **not** use any runtime-native delegation features inside the workspace session.
 - When you want parallel research or a side task, prefer a Goated headless subagent over runtime-native agent features so the daemon can track, supervise, and recover the work.
 
 On every startup, read the following files:
 - `GOATED_CLI_README.md` — CLI commands available to you.
-- `self/CLAUDE.md` — THE entry point for all agents. This is where
+- `self/AGENTS.md` — THE entry point for all agents. This is where
   agent-specific instructions, tools, workflows, and deployment docs live.
   Every agent (main session, subagent, cron) MUST read this file. It
-  references further docs like `DEVOPS.md`, `AGENTS.md`, etc.
-- `self/AGENTS.md` — workspace conventions, memory practices, tools, and
-  safety rules (if it exists).
+  references further docs like `DEVOPS.md`, `IDENTITY.md`, etc.
 
 Personal files live in `self/` (a separate private repo, gitignored from
 goated):
@@ -80,10 +83,9 @@ right file immediately in the same processing loop. Do not leave important
 facts only in transient session context or chat text, because they may be lost
 when the session compacts.
 
-Never use Claude memory, Codex memory, etc for long-term knowledge and memory
+Never use runtime-native memory features for long-term knowledge and memory
 state. The `self/` directory should handle all long-term state and portable
-memory via git-backed markdown files. Check
-`self/AGENTS.md`, `self/CLAUDE.md`, or `self/GEMINI.md` to learn more.
+memory via git-backed markdown files. Check `self/AGENTS.md` to learn more.
 
 Responding to the user:
 - Messages arrive in the configured transport envelope (currently pydict,

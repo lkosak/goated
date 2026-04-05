@@ -12,26 +12,41 @@ import (
 
 type HeadlessRuntime struct {
 	WorkspaceDir string
+	Provider     string
+	Model        string
 }
 
-func NewHeadlessRuntime(workspaceDir string) *HeadlessRuntime {
-	return &HeadlessRuntime{WorkspaceDir: workspaceDir}
+func NewHeadlessRuntime(workspaceDir, provider, model string) *HeadlessRuntime {
+	return &HeadlessRuntime{
+		WorkspaceDir: workspaceDir,
+		Provider:     strings.TrimSpace(provider),
+		Model:        strings.TrimSpace(model),
+	}
 }
 
 func (h *HeadlessRuntime) Descriptor() agent.RuntimeDescriptor {
-	return NewSessionRuntime(h.WorkspaceDir, "").Descriptor()
+	return NewSessionRuntime(h.WorkspaceDir, "", "", "", "").Descriptor()
+}
+
+func (h *HeadlessRuntime) piArgs(prompt string) []string {
+	args := []string{
+		"-p", prompt,
+		"--mode", "json",
+		"--no-session",
+	}
+	if h.Provider != "" {
+		args = append(args, "--provider", h.Provider)
+	}
+	if h.Model != "" {
+		args = append(args, "--model", h.Model)
+	}
+	return args
 }
 
 func (h *HeadlessRuntime) RunSync(ctx context.Context, store *db.Store, req agent.HeadlessRequest) (agent.HeadlessResult, error) {
 	version := h.Version(ctx)
 	workspaceDir := chooseWorkspace(req.WorkspaceDir, h.WorkspaceDir)
-	cmd := exec.CommandContext(
-		ctx,
-		"pi",
-		"-p", req.Prompt,
-		"--mode", "json",
-		"--no-session",
-	)
+	cmd := exec.CommandContext(ctx, "pi", h.piArgs(req.Prompt)...)
 	cmd.Dir = workspaceDir
 
 	result, err := subagent.RunSyncCommand(ctx, store, cmd, subagent.RunOpts{
@@ -62,12 +77,7 @@ func (h *HeadlessRuntime) RunSync(ctx context.Context, store *db.Store, req agen
 func (h *HeadlessRuntime) RunBackground(store *db.Store, req agent.HeadlessRequest) (agent.HeadlessResult, error) {
 	version := h.Version(context.Background())
 	workspaceDir := chooseWorkspace(req.WorkspaceDir, h.WorkspaceDir)
-	cmd := exec.Command(
-		"pi",
-		"-p", req.Prompt,
-		"--mode", "json",
-		"--no-session",
-	)
+	cmd := exec.Command("pi", h.piArgs(req.Prompt)...)
 	cmd.Dir = workspaceDir
 
 	result, err := subagent.RunBackgroundCommand(store, cmd, subagent.RunOpts{

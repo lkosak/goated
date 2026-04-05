@@ -36,8 +36,8 @@ type Service struct {
 	// after the flush timeout. If nil, the caller-provided ctx is used.
 	DrainCtx context.Context
 
-	inflight  sync.WaitGroup
-	draining  atomic.Bool // set when shutdown begins; prevents new inflight work
+	inflight sync.WaitGroup
+	draining atomic.Bool // set when shutdown begins; prevents new inflight work
 
 	msgCount     uint64 // atomic; counts non-command messages
 	mu           sync.Mutex

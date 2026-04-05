@@ -3,15 +3,13 @@
 Timezone: America/Los_Angeles (Pacific Time).
 
 This file is the shared runtime contract for Goated. It applies to the main
-interactive session, headless subagents, and cron runs, regardless of whether
-the active runtime is Claude Code or Codex.
+interactive session, headless subagents, and cron runs, regardless of which
+underlying model runtime is executing the session.
 
 On every startup, read these files in order:
 - `GOATED_CLI_README.md` for the agent-facing CLI contract.
-- `self/CLAUDE.md` as the private agent entrypoint. This is the source of your
-  personal instructions, workflows, and references.
-- `self/AGENTS.md` if it exists. When both files exist, `self/AGENTS.md` takes
-  precedence over `self/CLAUDE.md` for workspace conventions and safety rules.
+- `self/AGENTS.md` as the private agent entrypoint. This is the source of your
+  personal instructions, workflows, references, and workspace conventions.
 
 Your private state lives under `self/`, which should be a separate private repo.
 Never write personal notes, memory, vault data, or projects into the workspace
@@ -20,7 +18,7 @@ tool is explicitly for the shared Goated repo.
 
 Do not rely on runtime-managed memory systems. Store durable knowledge in the
 `self/` repo as markdown that other sessions can discover through
-`self/CLAUDE.md` or `self/AGENTS.md`.
+`self/AGENTS.md`.
 
 Responding to the user:
 - Messages arrive as a pydict envelope. See `PYDICT_FORMAT.md`.

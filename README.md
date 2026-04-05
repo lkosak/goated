@@ -281,6 +281,12 @@ Run the interactive bootstrap:
 
 This creates a `goated.json` config file and writes secrets to `workspace/creds/*.txt`. You can also create `goated.json` manually from `goated.json.example`:
 
+If you choose the `pi` runtime during bootstrap, Goated also initializes a
+Goated-managed Pi session and warms it up from `GOATED.md` so the first real
+message lands in an initialized session. Pi provider auth and custom provider
+config remain Pi-native under `~/.pi/agent/` (`auth.json`, `models.json`) rather
+than `goated.json` or `workspace/creds/`.
+
 ```sh
 cp goated.json.example goated.json
 # Edit goated.json with your settings, then set secrets:

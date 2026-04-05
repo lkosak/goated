@@ -136,7 +136,7 @@ func ReRedactRecentAll(logDir, workspaceDir string, n int) {
 
 // reRedactRecentJSONL re-redacts the most recent N JSONL files in a directory.
 func reRedactRecentJSONL(dir string, r *Redactor, contentKeys []string, hookMode bool, n int) {
-	files := recentFiles(dir, n)
+	files := recentFiles(dir, ".jsonl", n)
 	for _, path := range files {
 		reRedactJSONLFile(path, r, contentKeys, hookMode)
 	}
@@ -144,14 +144,15 @@ func reRedactRecentJSONL(dir string, r *Redactor, contentKeys []string, hookMode
 
 // reRedactRecentRaw re-redacts the most recent N files in a directory using full-string redaction.
 func reRedactRecentRaw(dir string, r *Redactor, n int) {
-	files := recentFiles(dir, n)
+	files := recentFiles(dir, "", n)
 	for _, path := range files {
 		reRedactRawFile(path, r)
 	}
 }
 
 // recentFiles returns the most recent N files in a directory, sorted by mod time (newest last).
-func recentFiles(dir string, n int) []string {
+// If suffix is non-empty, only files ending with that suffix are included.
+func recentFiles(dir string, suffix string, n int) []string {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
@@ -164,6 +165,9 @@ func recentFiles(dir string, n int) []string {
 	var files []fileInfo
 	for _, e := range entries {
 		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		if suffix != "" && !strings.HasSuffix(e.Name(), suffix) {
 			continue
 		}
 		info, err := e.Info()

@@ -47,6 +47,43 @@ func promptSecret(reader *bufio.Reader, label string) string {
 	return strings.TrimSpace(line)
 }
 
+// promptRequired re-prompts until a non-empty value is given.
+func promptRequired(reader *bufio.Reader, label, defaultVal string) string {
+	for {
+		val := prompt(reader, label, defaultVal)
+		if val != "" {
+			return val
+		}
+		fmt.Println("  A value is required. Try again.")
+	}
+}
+
+// promptOneOf re-prompts until the value is in the allowed set.
+func promptOneOf(reader *bufio.Reader, label, defaultVal string, allowed []string) string {
+	set := make(map[string]bool, len(allowed))
+	for _, a := range allowed {
+		set[a] = true
+	}
+	for {
+		val := prompt(reader, label, defaultVal)
+		if set[val] {
+			return val
+		}
+		fmt.Printf("  %q is not valid — must be one of: %s. Try again.\n", val, strings.Join(allowed, ", "))
+	}
+}
+
+// promptSecretRequired re-prompts until a non-empty secret is given.
+func promptSecretRequired(reader *bufio.Reader, label string) string {
+	for {
+		val := promptSecret(reader, label)
+		if val != "" {
+			return val
+		}
+		fmt.Println("  A value is required. Try again.")
+	}
+}
+
 func withDefault(val, fallback string) string {
 	if val != "" {
 		return val

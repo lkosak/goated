@@ -32,9 +32,29 @@ var bootstrapCmd = &cobra.Command{
 
 		// Prompt for common settings
 		tz := prompt(reader, "Default timezone", withDefault(strFromMap(existing, "default_timezone"), "America/Los_Angeles"))
-		runtime := prompt(reader, "Agent runtime (claude/codex/pi/claude_tui/codex_tui)", withDefault(strFromMap(existing, "agent_runtime"), "claude"))
-		if runtime != "claude" && runtime != "codex" && runtime != "pi" && runtime != "claude_tui" && runtime != "codex_tui" {
-			return fmt.Errorf("agent runtime must be claude, codex, pi, claude_tui, or codex_tui")
+		runtime := promptOneOf(reader, "Agent runtime (claude/codex/pi/claude_tui/codex_tui)",
+			withDefault(strFromMap(existing, "agent_runtime"), "claude_tui"),
+			[]string{"claude", "codex", "pi", "claude_tui", "codex_tui"})
+		if runtime == "pi" {
+			// Check if pi provider is already configured in goated.json
+			piConfigured := false
+			if piSection, ok := existing["pi"].(map[string]any); ok {
+				if p, _ := piSection["provider"].(string); p != "" {
+					if m, _ := piSection["model"].(string); m != "" {
+						piConfigured = true
+					}
+				}
+			}
+			if !piConfigured {
+				fmt.Println()
+				fmt.Println("Pi runtime requires a provider and model. Running configure wizard...")
+				fmt.Println()
+				if err := runtimePiConfigureCmd.RunE(runtimePiConfigureCmd, nil); err != nil {
+					return fmt.Errorf("pi configure: %w", err)
+				}
+				// Reload config since configure wizard wrote goated.json
+				existing, _ = app.ReadConfigJSON(configPath)
+			}
 		}
 
 		cfg := app.LoadConfig()
@@ -66,6 +86,9 @@ var bootstrapCmd = &cobra.Command{
 		}
 		if v := strFromMap(existing, "log_dir"); v != "" {
 			configMap["log_dir"] = v
+		}
+		if piSection, ok := existing["pi"].(map[string]any); ok {
+			configMap["pi"] = piSection
 		}
 
 		// Write goated.json
@@ -122,7 +145,7 @@ var bootstrapCmd = &cobra.Command{
 
 		fmt.Println()
 		repoRoot, _ := os.Getwd()
-		if err := runBootstrapPostSetup(repoRoot); err != nil {
+		if err := runBootstrapPostSetup(repoRoot, runtime); err != nil {
 			return err
 		}
 		fmt.Println()
@@ -189,7 +212,7 @@ func shouldInstallSystemDeps(repoRoot string) bool {
 	return cmd.Run() == nil
 }
 
-func runBootstrapPostSetup(repoRoot string) error {
+func runBootstrapPostSetup(repoRoot, agentRuntime string) error {
 	cfg := app.LoadConfig()
 
 	fmt.Println("Running post-bootstrap setup automatically so this workspace is immediately usable.")
@@ -213,12 +236,20 @@ func runBootstrapPostSetup(repoRoot string) error {
 	fmt.Println()
 	fmt.Println("[2/6] Installing the managed Go toolchain with scripts/setup_machine.sh install-go")
 	fmt.Println("Reason: bootstrap and self repo setup both build Go binaries, so the expected Go version needs to exist before any build step runs.")
-	setupCmd := exec.Command(filepath.Join(repoRoot, "scripts", "setup_machine.sh"), "install-go")
-	setupCmd.Dir = repoRoot
-	setupCmd.Stdout = os.Stdout
-	setupCmd.Stderr = os.Stderr
-	if err := setupCmd.Run(); err != nil {
-		return fmt.Errorf("run setup_machine.sh install-go: %w", err)
+	if runtime.GOOS == "linux" {
+		setupCmd := exec.Command(filepath.Join(repoRoot, "scripts", "setup_machine.sh"), "install-go")
+		setupCmd.Dir = repoRoot
+		setupCmd.Stdout = os.Stdout
+		setupCmd.Stderr = os.Stderr
+		if err := setupCmd.Run(); err != nil {
+			return fmt.Errorf("run setup_machine.sh install-go: %w", err)
+		}
+	} else {
+		if _, err := exec.LookPath("go"); err != nil {
+			fmt.Println("WARNING: Go not found on PATH. Install Go manually (e.g. brew install go) and re-run bootstrap.")
+		} else {
+			fmt.Println("Skipping install-go on this machine (Go already available).")
+		}
 	}
 
 	fmt.Println()
@@ -256,8 +287,23 @@ func runBootstrapPostSetup(repoRoot string) error {
 		return fmt.Errorf("start daemon: %w", err)
 	}
 
-	fmt.Println()
-	fmt.Println("[6/6] Installing the watchdog cron")
+	if agentRuntime == "pi" {
+		fmt.Println()
+		fmt.Println("[6/7] Initializing the Pi runtime session")
+		fmt.Println("Reason: Pi uses a Goated-managed persisted session; bootstrap should warm it up from GOATED.md so the first real user message lands in an initialized session.")
+		runtimeCmd := exec.Command(goatedBin, "runtime", "status")
+		runtimeCmd.Dir = repoRoot
+		runtimeCmd.Stdout = os.Stdout
+		runtimeCmd.Stderr = os.Stderr
+		if err := runtimeCmd.Run(); err != nil {
+			return fmt.Errorf("initialize pi runtime session: %w", err)
+		}
+		fmt.Println()
+		fmt.Println("[7/7] Installing the watchdog cron")
+	} else {
+		fmt.Println()
+		fmt.Println("[6/6] Installing the watchdog cron")
+	}
 	fmt.Println("Reason: the watchdog restarts the daemon if it dies, so a fresh bootstrap should also make the service resilient.")
 	if err := installWatchdogCron(repoRoot); err != nil {
 		return err
@@ -327,17 +373,24 @@ func maybeResetBootstrapChannels(reader *bufio.Reader, store *db.Store) error {
 	fmt.Println()
 	fmt.Println("You can keep them, delete some, or delete all before creating the replacement channel.")
 
-	deleteInput := prompt(reader, "Channels to delete before starting over (comma-separated names, 'all', or blank to keep)", "")
-	deleteInput = strings.TrimSpace(deleteInput)
-	if deleteInput == "" {
-		return nil
-	}
+	for {
+		deleteInput := prompt(reader, "Channels to delete before starting over (comma-separated names, 'all', or blank to keep)", "")
+		deleteInput = strings.TrimSpace(deleteInput)
+		if deleteInput == "" {
+			return nil
+		}
 
-	selected, deleteAll, err := parseChannelDeleteSelection(deleteInput, channels)
-	if err != nil {
-		return err
-	}
+		selected, deleteAll, err := parseChannelDeleteSelection(deleteInput, channels)
+		if err != nil {
+			fmt.Printf("  %v — try again.\n", err)
+			continue
+		}
 
+		return doChannelDeletes(store, selected, deleteAll, activeChannel)
+	}
+}
+
+func doChannelDeletes(store *db.Store, selected []string, deleteAll bool, activeChannel string) error {
 	deletedActive := false
 	for _, name := range selected {
 		if err := store.DeleteChannel(name); err != nil {

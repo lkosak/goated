@@ -233,6 +233,45 @@ After this runs, all relative paths (e.g., `vault/`, `posts/`, `state/`) resolve
 
 **Required imports** for this pattern: `os`, `path/filepath`.
 
+## Wrapping external CLIs
+
+When you need to integrate a third-party or standalone CLI, wrap it as a subcommand rather than reimplementing its functionality. This gives you a unified interface (`alan <tool> <args>`) while delegating to the real binary.
+
+Pattern:
+
+```go
+// cmd/mytool/external.go
+func externalCmd() *cobra.Command {
+    cmd := &cobra.Command{
+        Use:   "external",
+        Short: "Wrap an external CLI",
+        DisableFlagParsing: true,  // pass all args through
+        RunE: func(cmd *cobra.Command, args []string) error {
+            exe, _ := os.Executable()
+            selfDir := filepath.Join(filepath.Dir(exe), "..")
+            bin := filepath.Join(selfDir, "external-tool", "binary")
+
+            if _, err := os.Stat(bin); os.IsNotExist(err) {
+                return fmt.Errorf("binary not found at %s", bin)
+            }
+
+            c := exec.Command(bin, args...)
+            c.Stdin = os.Stdin
+            c.Stdout = os.Stdout
+            c.Stderr = os.Stderr
+            return c.Run()
+        },
+    }
+    return cmd
+}
+```
+
+Key points:
+- Use `DisableFlagParsing: true` so Cobra passes all args through to the wrapped binary
+- Resolve the binary path relative to the `self/` directory
+- Passthrough stdin/stdout/stderr so the wrapped CLI works naturally
+- This is how `alan endgame` wraps `endgame-cli`, `alan travel` wraps `traveler`, etc.
+
 ## Guidelines
 
 - **One binary, many subcommands.** Don't create separate binaries for every task. Group related operations under subcommands.

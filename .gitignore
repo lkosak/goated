@@ -11,6 +11,9 @@ goated.json
 *.exe
 *.out
 
+# Go vendor directory (generated locally via `go mod vendor`)
+/vendor/
+
 # Agent personal state (belongs in workspace/self/ private repo)
 workspace/self
 

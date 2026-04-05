@@ -65,8 +65,8 @@ func New(cfg app.Config) (agent.Runtime, error) {
 			descriptor: session.Descriptor(),
 		}, nil
 	case agent.RuntimePi:
-		session := pi.NewSessionRuntime(cfg.WorkspaceDir, cfg.LogDir)
-		headless := pi.NewHeadlessRuntime(cfg.WorkspaceDir)
+		session := pi.NewSessionRuntime(cfg.WorkspaceDir, cfg.LogDir, cfg.DBPath, cfg.PiProvider, cfg.PiModel)
+		headless := pi.NewHeadlessRuntime(cfg.WorkspaceDir, cfg.PiProvider, cfg.PiModel)
 		return &runtimeImpl{
 			session:    session,
 			headless:   headless,

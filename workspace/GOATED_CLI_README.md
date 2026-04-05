@@ -89,7 +89,7 @@ Notes:
 
 ## Cron management
 
-Use Goated cron for all recurring work. Do **not** use Codex or Claude Code built-in scheduling systems.
+Use Goated cron for all recurring work. Do **not** use any runtime-native scheduling systems.
 
 - Add cron (inline): `./goat cron add --chat <chat_id> --schedule "0 8 * * *" --prompt "Send me Berkeley weather"`
 - Add cron (file): `./goat cron add --chat <chat_id> --schedule "0 8 * * *" --prompt-file /path/to/prompt.md`
