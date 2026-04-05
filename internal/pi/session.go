@@ -18,8 +18,9 @@ import (
 )
 
 const postSendWaitTimeout = 6 * time.Minute
-const piWarmupPrompt = "You are being initialized. Read GOATED.md, then follow its startup instructions and say 'ready' — nothing else."
+const piWarmupPrompt = "You are being initialized. Say 'ready' — nothing else."
 const piActiveSessionMetaKey = "runtime.pi.active_session_id"
+const piSessionTurnCountKey = "runtime.pi.session_turn_count"
 
 // piDeliveryPreamble is prepended to every user/batch prompt envelope sent to
 // Pi. Pi's default behavior when handed a JSON envelope is to answer inline in
@@ -158,6 +159,9 @@ func (r *SessionRuntime) EnsureSession(ctx context.Context) error {
 		return fmt.Errorf("mkdir %s: %w", sessionDir, err)
 	}
 	if !r.hasSavedSession(sessionDir) {
+		// New or cleared session — reset turn count so the first real
+		// message gets the workspace-file preamble.
+		r.resetTurnCount()
 		if err := r.warmUpSession(ctx, sessionDir); err != nil {
 			fmt.Fprintf(os.Stderr, "[%s] pi session warm-up failed: %v\n", time.Now().Format(time.RFC3339), err)
 			// Non-fatal — the first real message will still create the session.
@@ -204,7 +208,48 @@ func (r *SessionRuntime) setActiveSessionID(id string) error {
 		return err
 	}
 	defer store.Close()
-	return store.SetMeta(piActiveSessionMetaKey, id)
+	if err := store.SetMeta(piActiveSessionMetaKey, id); err != nil {
+		return err
+	}
+	// Reset turn count for new session
+	return store.SetMeta(piSessionTurnCountKey, "0")
+}
+
+func (r *SessionRuntime) sessionTurnCount() int {
+	store, err := r.store()
+	if err != nil {
+		return -1
+	}
+	defer store.Close()
+	val := store.GetMeta(piSessionTurnCountKey)
+	n, _ := fmt.Sscanf(val, "%d", new(int))
+	if n == 0 {
+		return 0
+	}
+	var count int
+	fmt.Sscanf(val, "%d", &count)
+	return count
+}
+
+func (r *SessionRuntime) resetTurnCount() {
+	store, err := r.store()
+	if err != nil {
+		return
+	}
+	defer store.Close()
+	store.SetMeta(piSessionTurnCountKey, "0")
+}
+
+func (r *SessionRuntime) incrementTurnCount() {
+	store, err := r.store()
+	if err != nil {
+		return
+	}
+	defer store.Close()
+	val := store.GetMeta(piSessionTurnCountKey)
+	var count int
+	fmt.Sscanf(val, "%d", &count)
+	store.SetMeta(piSessionTurnCountKey, fmt.Sprintf("%d", count+1))
 }
 
 func (r *SessionRuntime) ensureActiveSessionID() (string, error) {
@@ -257,6 +302,15 @@ func (r *SessionRuntime) sendEnvelope(ctx context.Context, envelope string) erro
 		return err
 	}
 	sessionDir := r.sessionDirFor(sessionID)
+
+	firstMessage := r.sessionTurnCount() == 0
+	if firstMessage {
+		// Insert preamble between delivery contract and envelope so the
+		// workspace context (including onboarding instructions) sits right
+		// next to the user message rather than being buried at the top.
+		envelope = envelope + "\n\n" + agent.BuildSessionPreamble(r.workspaceDir)
+	}
+	r.incrementTurnCount()
 
 	args := []string{"-p", envelope}
 	if r.hasSavedSession(sessionDir) {

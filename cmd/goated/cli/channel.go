@@ -164,15 +164,9 @@ func promptChannel(reader *bufio.Reader) (*db.Channel, error) {
 	fmt.Println("=== Add Channel ===")
 	fmt.Println()
 
-	name := prompt(reader, "Channel name (e.g. my-telegram, work-slack)", "")
-	if name == "" {
-		return nil, fmt.Errorf("channel name is required")
-	}
+	name := promptRequired(reader, "Channel name (e.g. my-telegram, work-slack)", "")
 
-	chType := prompt(reader, "Type (telegram/slack)", "slack")
-	if chType != "telegram" && chType != "slack" {
-		return nil, fmt.Errorf("type must be telegram or slack")
-	}
+	chType := promptOneOf(reader, "Type (telegram/slack)", "slack", []string{"telegram", "slack"})
 
 	config := make(map[string]string)
 
@@ -186,11 +180,7 @@ func promptChannel(reader *bufio.Reader) (*db.Channel, error) {
 		fmt.Println("  https://core.telegram.org/bots#botfather")
 		fmt.Println()
 
-		token := promptSecret(reader, "Telegram bot token")
-		if token == "" {
-			return nil, fmt.Errorf("telegram bot token is required")
-		}
-		config["bot_token"] = token
+		config["bot_token"] = promptSecretRequired(reader, "Telegram bot token")
 
 		mode := prompt(reader, "Mode (polling/webhook)", "polling")
 		config["mode"] = mode
@@ -224,23 +214,9 @@ func promptChannel(reader *bufio.Reader) (*db.Channel, error) {
 		fmt.Println("     → View channel details → copy the ID at the bottom")
 		fmt.Println()
 
-		botToken := promptSecret(reader, "Slack bot token (xoxb-...)")
-		if botToken == "" {
-			return nil, fmt.Errorf("slack bot token is required")
-		}
-		config["bot_token"] = botToken
-
-		appToken := promptSecret(reader, "Slack app token (xapp-...)")
-		if appToken == "" {
-			return nil, fmt.Errorf("slack app token is required")
-		}
-		config["app_token"] = appToken
-
-		channelID := prompt(reader, "Slack DM channel ID", "")
-		if channelID == "" {
-			return nil, fmt.Errorf("slack channel ID is required")
-		}
-		config["channel_id"] = channelID
+		config["bot_token"] = promptSecretRequired(reader, "Slack bot token (xoxb-...)")
+		config["app_token"] = promptSecretRequired(reader, "Slack app token (xapp-...)")
+		config["channel_id"] = promptRequired(reader, "Slack DM channel ID", "")
 	}
 
 	return &db.Channel{

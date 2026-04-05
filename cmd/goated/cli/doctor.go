@@ -61,6 +61,11 @@ func runDoctorChecks(cfg app.Config) []checkResult {
 		checks = append(checks, checkTmux())
 	}
 
+	// 4b. Pi provider config (only for pi runtime)
+	if agent.RuntimeProvider(cfg.AgentRuntime) == agent.RuntimePi {
+		checks = append(checks, checkPiProvider(cfg))
+	}
+
 	// 5. Workspace directory
 	checks = append(checks, checkWorkspaceDir(cfg.WorkspaceDir))
 
@@ -153,6 +158,22 @@ func checkRuntimeBinary(runtime string) checkResult {
 		Name:   fmt.Sprintf("%s binary", binary),
 		OK:     true,
 		Detail: path,
+	}
+}
+
+func checkPiProvider(cfg app.Config) checkResult {
+	if cfg.PiProvider == "" || cfg.PiModel == "" {
+		return checkResult{
+			Name:    "pi provider",
+			OK:      false,
+			Detail:  "pi.provider and/or pi.model not set in goated.json",
+			FixHint: "Run: ./goated runtime pi configure",
+		}
+	}
+	return checkResult{
+		Name:   "pi provider",
+		OK:     true,
+		Detail: fmt.Sprintf("%s / %s", cfg.PiProvider, cfg.PiModel),
 	}
 }
 

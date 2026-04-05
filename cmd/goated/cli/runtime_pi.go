@@ -39,32 +39,26 @@ var runtimePiConfigureCmd = &cobra.Command{
 		fmt.Println("  - the model ID the provider expects")
 		fmt.Println()
 
-		provider := prompt(reader, "Provider name", "fireworks")
-		if provider == "" {
-			return fmt.Errorf("provider name is required")
+		provider := promptRequired(reader, "Provider name", "fireworks")
+
+		baseURL := promptRequired(reader, "Base URL", defaultBaseURLFor(provider))
+
+		apiStyle := promptOneOf(reader, "API style (openai-completions/openai-responses/anthropic)", "openai-completions",
+			[]string{"openai-completions", "openai-responses", "anthropic"})
+
+		apiKey := promptSecretRequired(reader, "API key (hidden)")
+
+		modelDefault := "kimi-k2p5"
+		modelPrompt := "Model ID"
+		if strings.EqualFold(provider, "fireworks") {
+			modelPrompt = "Model ID (accounts/fireworks/models/ prefix added automatically)"
+		}
+		modelID := promptRequired(reader, modelPrompt, modelDefault)
+		if strings.EqualFold(provider, "fireworks") && !strings.Contains(modelID, "/") {
+			modelID = "accounts/fireworks/models/" + modelID
 		}
 
-		baseURL := prompt(reader, "Base URL", defaultBaseURLFor(provider))
-		if baseURL == "" {
-			return fmt.Errorf("base URL is required")
-		}
-
-		apiStyle := prompt(reader, "API style (openai-completions/openai-responses/anthropic)", "openai-completions")
-		if apiStyle == "" {
-			apiStyle = "openai-completions"
-		}
-
-		apiKey := promptSecret(reader, "API key (hidden)")
-		if apiKey == "" {
-			return fmt.Errorf("API key is required")
-		}
-
-		modelID := prompt(reader, "Model ID", "")
-		if modelID == "" {
-			return fmt.Errorf("model ID is required")
-		}
-
-		displayName := prompt(reader, "Display name", modelID)
+		displayName := prompt(reader, "Display name", modelDefault)
 		contextWindowStr := prompt(reader, "Context window (tokens)", "131072")
 		maxTokensStr := prompt(reader, "Max output tokens", contextWindowStr)
 
@@ -124,7 +118,7 @@ var runtimePiConfigureCmd = &cobra.Command{
 			providers = map[string]any{}
 		}
 		if _, exists := providers[provider]; exists {
-			answer := prompt(reader, fmt.Sprintf("Provider %q already exists — overwrite? (y/N)", provider), "N")
+			answer := prompt(reader, fmt.Sprintf("Provider %q already exists — overwrite? (Y/n)", provider), "Y")
 			if !strings.EqualFold(strings.TrimSpace(answer), "y") {
 				return fmt.Errorf("aborted by user")
 			}
