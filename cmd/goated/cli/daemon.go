@@ -306,6 +306,26 @@ type daemonSendResponse struct {
 }
 
 func runDaemonSocket(ctx context.Context, socketPath string, responder gateway.Responder, session agent.SessionRuntime, logger *msglog.Logger, gatewayName string) {
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		runDaemonSocketOnce(ctx, socketPath, responder, session, logger, gatewayName)
+		// If we get here, the listener died — wait and retry
+		if ctx.Err() != nil {
+			return
+		}
+		fmt.Fprintf(os.Stderr, "[%s] daemon socket died, restarting in 3s...\n", time.Now().Format(time.RFC3339))
+		select {
+		case <-time.After(3 * time.Second):
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func runDaemonSocketOnce(ctx context.Context, socketPath string, responder gateway.Responder, session agent.SessionRuntime, logger *msglog.Logger, gatewayName string) {
+	_ = os.Remove(socketPath)
 	lc := net.ListenConfig{}
 	ln, err := lc.Listen(ctx, "unix", socketPath)
 	if err != nil {
@@ -315,9 +335,23 @@ func runDaemonSocket(ctx context.Context, socketPath string, responder gateway.R
 	defer ln.Close()
 	_ = os.Chmod(socketPath, 0o600)
 
+	// Monitor socket file existence — if deleted, close listener to trigger restart
 	go func() {
-		<-ctx.Done()
-		_ = ln.Close()
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				_ = ln.Close()
+				return
+			case <-ticker.C:
+				if _, err := os.Stat(socketPath); os.IsNotExist(err) {
+					fmt.Fprintf(os.Stderr, "[%s] daemon socket file disappeared, closing listener\n", time.Now().Format(time.RFC3339))
+					_ = ln.Close()
+					return
+				}
+			}
+		}
 	}()
 
 	for {
@@ -326,8 +360,9 @@ func runDaemonSocket(ctx context.Context, socketPath string, responder gateway.R
 			if ctx.Err() != nil {
 				return
 			}
+			// Listener was closed (e.g. socket file disappeared) — return to trigger retry
 			fmt.Fprintf(os.Stderr, "[%s] daemon socket accept failed: %v\n", time.Now().Format(time.RFC3339), err)
-			continue
+			return
 		}
 		go handleDaemonSocketConn(ctx, conn, responder, session, logger, gatewayName)
 	}
