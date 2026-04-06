@@ -31,6 +31,7 @@ Example:
   EOF`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		chatID, _ := cmd.Flags().GetString("chat")
+		threadTS, _ := cmd.Flags().GetString("thread")
 		source, _ := cmd.Flags().GetString("source")
 		logPath, _ := cmd.Flags().GetString("log")
 		if chatID == "" {
@@ -61,6 +62,7 @@ Example:
 		if err := json.NewEncoder(conn).Encode(daemonSendRequest{
 			RequestID: requestID,
 			ChatID:    chatID,
+			ThreadTS:  strings.TrimSpace(threadTS),
 			Text:      text,
 			Source:    strings.TrimSpace(source),
 			LogPath:   strings.TrimSpace(logPath),
@@ -86,6 +88,7 @@ Example:
 
 func init() {
 	sendUserMessageCmd.Flags().String("chat", "", "Chat/channel ID to send to (required)")
+	sendUserMessageCmd.Flags().String("thread", "", "Thread timestamp to reply to (Slack thread_ts)")
 	sendUserMessageCmd.Flags().String("source", "", "Caller source (e.g. cron, subagent) — reserved for daemon delivery")
 	sendUserMessageCmd.Flags().String("log", "", "Path to the caller's log file")
 	rootCmd.AddCommand(sendUserMessageCmd)

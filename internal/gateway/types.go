@@ -31,6 +31,10 @@ type Responder interface {
 	SendMessage(ctx context.Context, chatID, text string) error
 }
 
+type ThreadedResponder interface {
+	SendThreadMessage(ctx context.Context, chatID, threadTS, text string) error
+}
+
 type MediaResponder interface {
 	SendMedia(ctx context.Context, chatID, filePath, caption, mediaType string) error
 }

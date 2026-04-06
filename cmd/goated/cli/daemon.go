@@ -292,6 +292,7 @@ var daemonRunCmd = &cobra.Command{
 type daemonSendRequest struct {
 	RequestID string `json:"request_id"`
 	ChatID    string `json:"chat_id"`
+	ThreadTS  string `json:"thread_ts,omitempty"`
 	Text      string `json:"text,omitempty"`
 	FilePath  string `json:"file_path,omitempty"`
 	Caption   string `json:"caption,omitempty"`
@@ -349,6 +350,7 @@ func handleDaemonSocketConn(ctx context.Context, conn net.Conn, responder gatewa
 	req.FilePath = strings.TrimSpace(req.FilePath)
 	req.Caption = strings.TrimSpace(req.Caption)
 	req.MediaType = strings.TrimSpace(req.MediaType)
+	req.ThreadTS = strings.TrimSpace(req.ThreadTS)
 	req.Source = strings.TrimSpace(req.Source)
 	req.LogPath = strings.TrimSpace(req.LogPath)
 	if req.Text == "" && req.FilePath == "" {
@@ -383,6 +385,13 @@ func handleDaemonSocketConn(ctx context.Context, conn net.Conn, responder gatewa
 			sendErr = fmt.Errorf("gateway %s does not support outbound media yet", gatewayName)
 		} else {
 			sendErr = mediaResponder.SendMedia(ctx, req.ChatID, req.FilePath, req.Caption, req.MediaType)
+		}
+	} else if req.ThreadTS != "" {
+		threadedResponder, ok := responder.(gateway.ThreadedResponder)
+		if !ok {
+			sendErr = fmt.Errorf("gateway %s does not support threaded messages", gatewayName)
+		} else {
+			sendErr = threadedResponder.SendThreadMessage(ctx, req.ChatID, req.ThreadTS, req.Text)
 		}
 	} else {
 		sendErr = responder.SendMessage(ctx, req.ChatID, req.Text)
