@@ -456,6 +456,8 @@ func waitForClaudeReady(ctx context.Context, timeout time.Duration) error {
 func waitForClaudeReadyFor(ctx context.Context, session string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	acceptedWorkspaceTrust := false
+	acceptedBypassPerms := false
+	target := tmux.TargetForSession(session)
 	for time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
@@ -464,8 +466,21 @@ func waitForClaudeReadyFor(ctx context.Context, session string, timeout time.Dur
 		}
 		out, err := tmux.CapturePaneFor(ctx, session)
 		if err == nil {
+			if !acceptedBypassPerms && isBypassPermsPrompt(out) {
+				// Arrow down to "Yes, I accept" then press Enter.
+				if err := tmux.Run(ctx, "send-keys", "-t", target, "Down"); err != nil {
+					return fmt.Errorf("navigate bypass permissions prompt: %w", err)
+				}
+				time.Sleep(200 * time.Millisecond)
+				if err := tmux.Run(ctx, "send-keys", "-t", target, "Enter"); err != nil {
+					return fmt.Errorf("confirm bypass permissions prompt: %w", err)
+				}
+				acceptedBypassPerms = true
+				time.Sleep(500 * time.Millisecond)
+				continue
+			}
 			if !acceptedWorkspaceTrust && isWorkspaceTrustPrompt(out) {
-				if err := tmux.Run(ctx, "send-keys", "-t", session+":0.0", "Enter"); err != nil {
+				if err := tmux.Run(ctx, "send-keys", "-t", target, "Enter"); err != nil {
 					return fmt.Errorf("confirm Claude workspace trust prompt: %w", err)
 				}
 				acceptedWorkspaceTrust = true
@@ -479,6 +494,12 @@ func waitForClaudeReadyFor(ctx context.Context, session string, timeout time.Dur
 		time.Sleep(350 * time.Millisecond)
 	}
 	return fmt.Errorf("timed out waiting for Claude session readiness")
+}
+
+func isBypassPermsPrompt(out string) bool {
+	return strings.Contains(out, "Bypass Permissions mode") &&
+		strings.Contains(out, "Yes, I accept") &&
+		strings.Contains(out, "Enter to confirm")
 }
 
 func isWorkspaceTrustPrompt(out string) bool {

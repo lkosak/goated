@@ -12,7 +12,7 @@ import (
 
 const defaultSession = "goat_claude_main"
 
-func targetForSession(session string) string {
+func TargetForSession(session string) string {
 	return session + ":0.0"
 }
 
@@ -55,14 +55,14 @@ func PasteAndEnterFor(ctx context.Context, session, text string) error {
 	if err := run(ctx, "load-buffer", "-b", "goat", tmp.Name()); err != nil {
 		return fmt.Errorf("load-buffer: %w", err)
 	}
-	if err := run(ctx, "paste-buffer", "-b", "goat", "-t", targetForSession(session)); err != nil {
+	if err := run(ctx, "paste-buffer", "-b", "goat", "-t", TargetForSession(session)); err != nil {
 		return fmt.Errorf("paste-buffer: %w", err)
 	}
 
 	// Poll until the visible pane changes (paste arrived) or timeout.
 	_ = waitForVisibleChange(ctx, session, visibleBefore, 5*time.Second)
 
-	if err := run(ctx, "send-keys", "-t", targetForSession(session), "Enter"); err != nil {
+	if err := run(ctx, "send-keys", "-t", TargetForSession(session), "Enter"); err != nil {
 		return fmt.Errorf("send enter: %w", err)
 	}
 
@@ -70,7 +70,7 @@ func PasteAndEnterFor(ctx context.Context, session, text string) error {
 	// it actually submits. Do one delayed check and press Enter again if needed.
 	time.Sleep(3 * time.Second)
 	if out, err := CaptureVisibleFor(ctx, session); err == nil && hasCollapsedPastePlaceholder(out) {
-		if err := run(ctx, "send-keys", "-t", targetForSession(session), "Enter"); err != nil {
+		if err := run(ctx, "send-keys", "-t", TargetForSession(session), "Enter"); err != nil {
 			return fmt.Errorf("send retry enter: %w", err)
 		}
 	}
@@ -84,7 +84,7 @@ func CapturePane(ctx context.Context) (string, error) {
 
 // CapturePaneFor returns the full scrollback of the given tmux pane.
 func CapturePaneFor(ctx context.Context, session string) (string, error) {
-	return runOutput(ctx, "capture-pane", "-t", targetForSession(session), "-p", "-S", "-")
+	return runOutput(ctx, "capture-pane", "-t", TargetForSession(session), "-p", "-S", "-")
 }
 
 // CaptureVisible returns only the visible portion of the pane (no scrollback).
@@ -94,7 +94,7 @@ func CaptureVisible(ctx context.Context) (string, error) {
 
 // CaptureVisibleFor returns only the visible portion of the pane (no scrollback).
 func CaptureVisibleFor(ctx context.Context, session string) (string, error) {
-	return runOutput(ctx, "capture-pane", "-t", targetForSession(session), "-p")
+	return runOutput(ctx, "capture-pane", "-t", TargetForSession(session), "-p")
 }
 
 // Run executes an arbitrary tmux command.
