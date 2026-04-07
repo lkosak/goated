@@ -63,6 +63,7 @@ type Config struct {
 	TelegramAttachmentsRoot         string
 	TelegramAttachmentMaxBytes      int64
 	TelegramAttachmentMaxTotalBytes int64
+	TelegramAllowedChatIDs          []string
 	SlackBotToken                   string
 	SlackAppToken                   string
 	SlackChannelID                  string
@@ -106,6 +107,7 @@ func LoadConfig() Config {
 	v.SetDefault("telegram.attachments_root", "")
 	v.SetDefault("telegram.attachment_max_bytes", int64(25*1024*1024))
 	v.SetDefault("telegram.attachment_max_total_bytes", int64(251*1024*1024))
+	v.SetDefault("telegram.allowed_chat_ids", []string{})
 	v.SetDefault("slack.attachments_root", "")
 	v.SetDefault("slack.channel_id", "")
 	v.SetDefault("slack.attachment_max_bytes", int64(25*1024*1024))
@@ -128,6 +130,7 @@ func LoadConfig() Config {
 	v.BindEnv("telegram.attachments_root", "GOAT_TELEGRAM_ATTACHMENTS_ROOT")
 	v.BindEnv("telegram.attachment_max_bytes", "GOAT_TELEGRAM_ATTACHMENT_MAX_BYTES")
 	v.BindEnv("telegram.attachment_max_total_bytes", "GOAT_TELEGRAM_ATTACHMENT_MAX_TOTAL_BYTES")
+	v.BindEnv("telegram.allowed_chat_ids", "GOAT_TELEGRAM_ALLOWED_CHAT_IDS")
 	v.BindEnv("slack.attachments_root", "GOAT_SLACK_ATTACHMENTS_ROOT")
 	v.BindEnv("slack.channel_id", "GOAT_SLACK_CHANNEL_ID")
 	v.BindEnv("slack.attachment_max_bytes", "GOAT_SLACK_ATTACHMENT_MAX_BYTES")
@@ -236,6 +239,7 @@ func LoadConfig() Config {
 		TelegramAttachmentsRoot:         telegramAttRoot,
 		TelegramAttachmentMaxBytes:      v.GetInt64("telegram.attachment_max_bytes"),
 		TelegramAttachmentMaxTotalBytes: v.GetInt64("telegram.attachment_max_total_bytes"),
+		TelegramAllowedChatIDs:          v.GetStringSlice("telegram.allowed_chat_ids"),
 		SlackBotToken:                   loadCred(credsDir, "GOAT_SLACK_BOT_TOKEN"),
 		SlackAppToken:                   loadCred(credsDir, "GOAT_SLACK_APP_TOKEN"),
 		SlackChannelID:                  slackChannelID,

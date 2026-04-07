@@ -30,6 +30,8 @@ type Connector struct {
 
 	httpClient *http.Client
 
+	allowedChatIDs map[string]struct{} // empty = allow all
+
 	attachmentsRootRel string
 	attachmentsRootAbs string
 
@@ -52,7 +54,7 @@ type WebhookOptions struct {
 	Path       string
 }
 
-func NewConnector(token string, store OffsetStore, attachmentCfg AttachmentConfig) (*Connector, error) {
+func NewConnector(token string, store OffsetStore, attachmentCfg AttachmentConfig, allowedChatIDs []string) (*Connector, error) {
 	bot, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
 		return nil, fmt.Errorf("init telegram bot: %w", err)
@@ -86,10 +88,18 @@ func NewConnector(token string, store OffsetStore, attachmentCfg AttachmentConfi
 		maxTotalBytes = defaultAttachmentTotalMax
 	}
 
+	allowed := make(map[string]struct{}, len(allowedChatIDs))
+	for _, id := range allowedChatIDs {
+		if id = strings.TrimSpace(id); id != "" {
+			allowed[id] = struct{}{}
+		}
+	}
+
 	return &Connector{
 		bot:                 bot,
 		store:               store,
 		httpClient:          &http.Client{Timeout: 2 * time.Minute},
+		allowedChatIDs:      allowed,
 		attachmentsRootRel:  rootRel,
 		attachmentsRootAbs:  rootAbs,
 		attachmentMaxBytes:  maxBytes,
@@ -234,6 +244,14 @@ func (c *Connector) processUpdate(ctx context.Context, handler gateway.Handler, 
 		return nil
 	}
 
+	chatID := strconv.FormatInt(update.Message.Chat.ID, 10)
+	if len(c.allowedChatIDs) > 0 {
+		if _, ok := c.allowedChatIDs[chatID]; !ok {
+			fmt.Fprintf(os.Stderr, "telegram: rejected message from unauthorized chat %s\n", chatID)
+			return nil
+		}
+	}
+
 	text := strings.TrimSpace(update.Message.Text)
 	if text == "" {
 		text = strings.TrimSpace(update.Message.Caption)
@@ -252,7 +270,7 @@ func (c *Connector) processUpdate(ctx context.Context, handler gateway.Handler, 
 	}
 	msg := gateway.IncomingMessage{
 		Channel:              "telegram",
-		ChatID:               strconv.FormatInt(update.Message.Chat.ID, 10),
+		ChatID:               chatID,
 		UserID:               strconv.FormatInt(int64(update.Message.From.ID), 10),
 		Text:                 text,
 		MessageID:            strconv.Itoa(update.Message.MessageID),

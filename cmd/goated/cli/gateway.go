@@ -60,7 +60,7 @@ var gatewayTelegramCmd = &cobra.Command{
 			RootPath:      cfg.TelegramAttachmentsRoot,
 			MaxBytes:      cfg.TelegramAttachmentMaxBytes,
 			MaxTotalBytes: cfg.TelegramAttachmentMaxTotalBytes,
-		})
+		}, cfg.TelegramAllowedChatIDs)
 		if err != nil {
 			return err
 		}

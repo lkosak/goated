@@ -230,7 +230,7 @@ var daemonRunCmd = &cobra.Command{
 				RootPath:      cfg.TelegramAttachmentsRoot,
 				MaxBytes:      cfg.TelegramAttachmentMaxBytes,
 				MaxTotalBytes: cfg.TelegramAttachmentMaxTotalBytes,
-			})
+			}, cfg.TelegramAllowedChatIDs)
 			if err != nil {
 				return fmt.Errorf("init telegram: %w", err)
 			}
