@@ -16,6 +16,7 @@ goated.json
 
 # Agent personal state (belongs in workspace/self/ private repo)
 workspace/self
+workspace/_self.bootstrap/tools/notesmd-cli/
 
 workspace/tmp/
 
