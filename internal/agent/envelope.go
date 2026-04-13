@@ -58,8 +58,13 @@ func BuildPromptEnvelope(channel, chatID, userPrompt string, attachments *Messag
 		kvs = append(kvs, pydict.KV{Key: "attachments_succeeded", Value: attachmentInfosToMaps(attachments.Succeeded)})
 	}
 
+	respondWith := fmt.Sprintf("./goat send_user_message --chat %s", chatID)
+	if threadID != "" {
+		respondWith += fmt.Sprintf(" --thread %s", threadID)
+	}
+
 	kvs = append(kvs,
-		pydict.KV{Key: "respond_with", Value: fmt.Sprintf("./goat send_user_message --chat %s", chatID)},
+		pydict.KV{Key: "respond_with", Value: respondWith},
 		pydict.KV{Key: "formatting", Value: formattingDoc},
 		pydict.KV{Key: "instruction", Value: "Send a plan message first if the task will take longer than 30s."},
 	)
@@ -126,11 +131,17 @@ func BuildBatchEnvelope(channel, chatID string, messages []PromptMessage) string
 		msgItems = append(msgItems, item)
 	}
 
+	// If the last message in the batch is threaded, include --thread in respond_with.
+	respondWith := fmt.Sprintf("./goat send_user_message --chat %s", chatID)
+	if last := messages[len(messages)-1]; last.ThreadID != "" {
+		respondWith += fmt.Sprintf(" --thread %s", last.ThreadID)
+	}
+
 	kvs := []pydict.KV{
 		{Key: "messages", Value: msgItems},
 		{Key: "source", Value: channel},
 		{Key: "chat_id", Value: chatID},
-		{Key: "respond_with", Value: fmt.Sprintf("./goat send_user_message --chat %s", chatID)},
+		{Key: "respond_with", Value: respondWith},
 		{Key: "formatting", Value: formattingDoc},
 		{Key: "instruction", Value: "Send a plan message first if the task will take longer than 30s."},
 	}

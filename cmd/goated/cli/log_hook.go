@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -154,9 +156,78 @@ func extractInlineCredValues(data []byte) []string {
 	return values
 }
 
+// logHookAsyncCmd is a non-blocking wrapper around log-hook. Claude Code hooks
+// run synchronously on every tool call, so the full redaction/logging pass was
+// showing up as noticeable per-tool latency. This command reads stdin, writes
+// it to a temp file, spawns `goated log-hook` in a detached child process, and
+// returns immediately — so hook logging happens in the background.
+var logHookAsyncCmd = &cobra.Command{
+	Use:    "log-hook-async",
+	Short:  "Capture a Claude Code hook event and log it asynchronously (internal)",
+	Hidden: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		eventName, _ := cmd.Flags().GetString("event")
+		hookDir, _ := cmd.Flags().GetString("hook-dir")
+		credsDir, _ := cmd.Flags().GetString("creds-dir")
+
+		if eventName == "" || hookDir == "" || credsDir == "" {
+			return fmt.Errorf("--event, --hook-dir, and --creds-dir are required")
+		}
+
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return fmt.Errorf("reading stdin: %w", err)
+		}
+		if err := os.MkdirAll(hookDir, 0o755); err != nil {
+			return fmt.Errorf("mkdir hook dir: %w", err)
+		}
+
+		inputFile, err := os.CreateTemp(hookDir, "hook-event-*.json")
+		if err != nil {
+			return fmt.Errorf("create temp hook payload: %w", err)
+		}
+		inputPath := inputFile.Name()
+		if _, err := inputFile.Write(data); err != nil {
+			inputFile.Close()
+			_ = os.Remove(inputPath)
+			return fmt.Errorf("write temp hook payload: %w", err)
+		}
+		if err := inputFile.Close(); err != nil {
+			_ = os.Remove(inputPath)
+			return fmt.Errorf("close temp hook payload: %w", err)
+		}
+
+		exePath, err := os.Executable()
+		if err != nil {
+			_ = os.Remove(inputPath)
+			return fmt.Errorf("resolve executable: %w", err)
+		}
+
+		script := fmt.Sprintf("cat %q | %q log-hook --event %q --hook-dir %q --creds-dir %q; rm -f %q",
+			inputPath, exePath, eventName, hookDir, credsDir, inputPath)
+		child := exec.Command("/bin/sh", "-c", script)
+		child.Dir = filepath.Dir(exePath)
+		child.Env = os.Environ()
+		child.Stdout = nil
+		child.Stderr = nil
+		child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		if err := child.Start(); err != nil {
+			_ = os.Remove(inputPath)
+			return fmt.Errorf("start async hook logger: %w", err)
+		}
+
+		return nil
+	},
+}
+
 func init() {
 	logHookCmd.Flags().String("event", "", "Hook event name (e.g. SessionStart, Stop)")
 	logHookCmd.Flags().String("hook-dir", "", "Directory for hook output files")
 	logHookCmd.Flags().String("creds-dir", "", "Path to creds directory for redaction")
 	rootCmd.AddCommand(logHookCmd)
+
+	logHookAsyncCmd.Flags().String("event", "", "Hook event name (e.g. SessionStart, Stop)")
+	logHookAsyncCmd.Flags().String("hook-dir", "", "Directory for hook output files")
+	logHookAsyncCmd.Flags().String("creds-dir", "", "Path to creds directory for redaction")
+	rootCmd.AddCommand(logHookAsyncCmd)
 }
